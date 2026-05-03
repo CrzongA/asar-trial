@@ -61,6 +61,14 @@ A Next.js application initialized using `create-next-app`. Will contain componen
 #### [NEW] `sim_config/`
 Launch files and scripts to bootstrap the Gazebo Harmonic environment, spawn the drone, instantiate PX4 SITL, and attach the ROS 2 Jazzy camera and IMU sensors.
 
+### Infrastructure & Orchestration
+#### [NEW] `infrastructure/`
+Contains necessary middleware configurations and orchestration scripts:
+- **`docker-compose.yml`**: Orchestrates the ROCm vLLM Docker container and defines network boundaries for the AI services.
+- **ROS-Web Bridge**: Launch files for `rosbridge_server` to establish the WebSocket connection required by the Next.js `roslibjs` client.
+- **WebRTC Streamer**: Configuration or node setup (e.g., via GStreamer/WebRTC bridge) to capture the Gazebo ROS image topic and stream it to the frontend via WebRTC.
+- **Micro-XRCE-DDS Agent**: Startup scripts for the DDS agent, which is mandatory for PX4 SITL to communicate with the ROS 2 Jazzy network.
+
 ## Verification Plan
 
 ### Automated Tests
