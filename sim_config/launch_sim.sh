@@ -1,5 +1,31 @@
 #!/bin/bash
 echo "Starting Gazebo Harmonic for ASAR..."
-# This would normally launch gz sim with a custom world containing the drone
-# Example: gz sim -r asar_world.sdf
-echo "Mock Gazebo Simulator Started"
+
+# Ensure we have the ROS 2 setup sourced
+if [ -f "/opt/ros/jazzy/setup.bash" ]; then
+    source /opt/ros/jazzy/setup.bash
+else
+    echo "Warning: /opt/ros/jazzy/setup.bash not found. Make sure ROS 2 is active."
+fi
+
+# Trap SIGINT to kill background processes on exit
+trap 'kill 0' SIGINT
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+
+# Start Gazebo Harmonic in the background
+echo "Launching Gazebo world: asar_world.sdf"
+gz sim -r "$DIR/asar_world.sdf" &
+GZ_PID=$!
+
+echo "Waiting for Gazebo to initialize..."
+sleep 5
+
+# Start the ROS-Gazebo bridge for the camera topic
+# Note: In Gazebo Harmonic, we map gz.msgs.Image to sensor_msgs/msg/Image
+echo "Starting ros_gz_bridge for /camera/image_raw"
+ros2 run ros_gz_bridge parameter_bridge /camera/image_raw@sensor_msgs/msg/Image[gz.msgs.Image &
+BRIDGE_PID=$!
+
+echo "Simulator and Bridge are running. Press Ctrl+C to exit."
+wait
