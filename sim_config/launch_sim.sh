@@ -15,7 +15,10 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
 # Start Gazebo Harmonic in the background
 echo "Launching Gazebo world: asar_world.sdf"
-gz sim -r "$DIR/asar_world.sdf" &
+export LIBGL_ALWAYS_SOFTWARE=1
+export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+export GALLIUM_DRIVER=llvmpipe
+xvfb-run -a -s "-screen 0 1024x768x24" gz sim -v 4 -s -r --headless-rendering "$DIR/asar_world.sdf" &
 GZ_PID=$!
 
 echo "Waiting for Gazebo to initialize..."

@@ -1,2 +1,5 @@
 aiohttp
 aiortc
+pyyaml
+numpy<2
+opencv-python
