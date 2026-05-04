@@ -20,7 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'mission_node = mission_control.mission_node:main'
+            'mission_node = mission_control.mission_node:main',
+            'teleop_node = mission_control.teleop_node:main',
         ],
     },
 )
