@@ -3,3 +3,12 @@ aiortc
 pyyaml
 numpy<2
 opencv-python
+
+# PX4 SITL build prerequisites (consumed by `make px4_sitl gz_x500_gimbal`)
+kconfiglib
+jinja2
+empy<4  # PX4's CMake template generator uses em.RAW_OPT, removed in empy 4.x
+pyros-genmsg
+toml
+jsonschema
+packaging
