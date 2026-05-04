@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<sdf version="1.10">
+  <model name="asar_drone">
+    <!--
+      Inherit the full x500_gimbal airframe (frame, motors, IMU, gimbal, RGB cam)
+      from PX4-Autopilot/Tools/simulation/gz/models/x500_gimbal/. The merge="true"
+      attribute flattens the include into this model so PX4's airframe config
+      (which references links like base_link by exact name) keeps working.
+    -->
+    <include merge="true">
+      <uri>model://x500_gimbal</uri>
+    </include>
+
+    <!--
+      Extension seam for additional sensors. Add new <link> + <sensor> blocks here
+      (and a corresponding <joint> attaching to base_link) without touching PX4.
+      Examples:
+
+      <link name="thermal_cam_link">
+        <pose relative_to="base_link">0.15 0 -0.05 0 0 0</pose>
+        <sensor name="thermal_camera" type="thermal_camera">...</sensor>
+      </link>
+      <joint name="thermal_cam_joint" type="fixed">
+        <parent>base_link</parent>
+        <child>thermal_cam_link</child>
+      </joint>
+
+      <link name="depth_cam_link">...</link>
+      <link name="lidar_link"><sensor type="gpu_lidar">...</sensor></link>
+    -->
+  </model>
+</sdf>

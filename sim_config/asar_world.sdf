@@ -64,45 +64,12 @@
       </link>
     </model>
 
-    <!-- Mock Drone with Camera -->
-    <model name="mock_drone">
-      <pose>0 0 2 0 0.5 0</pose> <!-- Hovering at 2m, pitched down slightly -->
-      <static>true</static> <!-- Static for simple testing without flight dynamics -->
-      <link name="base_link">
-        <visual name="visual">
-          <geometry>
-            <box>
-              <size>0.5 0.5 0.2</size>
-            </box>
-          </geometry>
-          <material>
-            <ambient>0.2 0.2 0.2 1</ambient>
-            <diffuse>0.2 0.2 0.2 1</diffuse>
-          </material>
-        </visual>
-        
-        <!-- RGB Camera -->
-        <sensor name="camera" type="camera">
-          <pose>0.25 0 0 0 0 0</pose>
-          <camera>
-            <horizontal_fov>1.047</horizontal_fov>
-            <image>
-              <width>640</width>
-              <height>480</height>
-              <format>RGB_INT8</format>
-            </image>
-            <clip>
-              <near>0.1</near>
-              <far>100</far>
-            </clip>
-          </camera>
-          <always_on>1</always_on>
-          <update_rate>10</update_rate>
-          <visualize>true</visualize>
-          <topic>camera/image_raw</topic>
-        </sensor>
-      </link>
-    </model>
+    <!--
+      Drone is no longer defined here. PX4 SITL spawns the asar_drone model
+      (a wrapper around x500_gimbal) into this world via PX4_GZ_MODEL_NAME.
+      Camera comes from the gimbal cam on that airframe and is bridged into
+      ROS as /camera/image_raw by launch_sim.sh.
+    -->
 
     <!-- Target Object: Person with red jacket (mocked as a red cylinder) -->
     <model name="red_target">
