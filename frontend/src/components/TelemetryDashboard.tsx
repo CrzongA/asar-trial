@@ -1,25 +1,56 @@
 import React, { useState, useEffect } from 'react';
+import { useRos } from './RosProvider';
+import * as ROSLIB from 'roslib';
 
 export default function TelemetryDashboard() {
+  const { ros, connected } = useRos();
   const [telemetry, setTelemetry] = useState({
     alt: 0,
     speed: 0,
     battery: 100,
-    mode: 'STABILIZED'
+    mode: 'WAITING'
   });
 
   useEffect(() => {
-    // Mock telemetry updates
-    const interval = setInterval(() => {
+    if (!ros || !connected) return;
+
+    const posSub = new ROSLIB.Topic({
+      ros: ros,
+      name: '/fmu/out/vehicle_local_position_v1',
+      messageType: 'px4_msgs/msg/VehicleLocalPosition'
+    });
+
+    const statusSub = new ROSLIB.Topic({
+      ros: ros,
+      name: '/fmu/out/vehicle_status_v4',
+      messageType: 'px4_msgs/msg/VehicleStatus'
+    });
+
+    posSub.subscribe((msg: any) => {
       setTelemetry(prev => ({
         ...prev,
-        alt: Math.max(0, prev.alt + (Math.random() - 0.5) * 0.5),
-        speed: Math.max(0, prev.speed + (Math.random() - 0.5) * 2),
-        battery: Math.max(0, prev.battery - 0.01)
+        alt: -msg.z, // PX4 NED: z is down, so altitude is -z
+        speed: Math.sqrt(msg.vx * msg.vx + msg.vy * msg.vy + msg.vz * msg.vz)
       }));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
+    });
+
+    statusSub.subscribe((msg: any) => {
+      const modes = {
+        1: 'MANUAL',
+        3: 'POSITION',
+        6: 'OFFBOARD'
+      };
+      setTelemetry(prev => ({
+        ...prev,
+        mode: (modes as any)[msg.nav_state] || `STATE_${msg.nav_state}`
+      }));
+    });
+
+    return () => {
+      posSub.unsubscribe();
+      statusSub.unsubscribe();
+    };
+  }, [ros, connected]);
 
   return (
     <div className="bg-neutral-800 rounded-xl border border-neutral-700 p-5 shadow-lg">

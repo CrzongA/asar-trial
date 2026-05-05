@@ -82,7 +82,7 @@ sleep 8
 # Camera: the gimbal cam has no explicit <topic>, so Gazebo names it by entity path.
 # Clock: needed so ROS nodes use sim time from PX4/Gazebo.
 echo "[4/4] Starting ros_gz_bridge (camera + clock)..."
-CAM_GZ_TOPIC="/world/asar_world/model/asar_drone/link/camera_link/sensor/camera/image"
+CAM_GZ_TOPIC="/world/asar_world/model/x500_gimbal_0/link/camera_link/sensor/camera/image"
 ros2 run ros_gz_bridge parameter_bridge \
     "${CAM_GZ_TOPIC}@sensor_msgs/msg/Image[gz.msgs.Image" \
     "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock" \

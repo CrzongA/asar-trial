@@ -7,33 +7,51 @@ interface LogEntry {
   message: string;
 }
 
+import { useRos } from './RosProvider';
+import * as ROSLIB from 'roslib';
+
 export default function VLMConsole() {
+  const { ros, connected } = useRos();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Mock VLM logs stream
-    const mockLogs = [
-      { type: 'info', message: 'VLM Agent Initialized (Qwen3-VL-235B)' },
-      { type: 'reasoning', message: 'Analyzing frame at 47.3977N, 8.5455E' },
-      { type: 'detection', message: 'Target potential: Red jacket detected (Conf: 0.89)' },
-      { type: 'action', message: 'Generating waypoint to inspect target...' }
-    ] as const;
+    if (!ros || !connected) return;
 
-    let index = 0;
-    const interval = setInterval(() => {
-      if (index < mockLogs.length) {
-        setLogs(prev => [...prev, { 
-          id: Date.now(), 
+    const vlmSub = new ROSLIB.Topic({
+      ros: ros,
+      name: '/vlm/target_detections',
+      messageType: 'std_msgs/msg/String'
+    });
+
+    setLogs([{ 
+      id: Date.now(), 
+      timestamp: new Date().toLocaleTimeString(), 
+      type: 'info', 
+      message: 'VLM Agent Connected (Live Feed)' 
+    }]);
+
+    vlmSub.subscribe((msg: any) => {
+      try {
+        const data = JSON.parse(msg.data);
+        setLogs(prev => [...prev, {
+          id: Date.now(),
           timestamp: new Date().toLocaleTimeString(),
-          ...mockLogs[index]
+          type: 'detection',
+          message: `Target detected: ${data.target} (Conf: ${data.confidence})`
         }]);
-        index++;
+      } catch (e) {
+        setLogs(prev => [...prev, {
+          id: Date.now(),
+          timestamp: new Date().toLocaleTimeString(),
+          type: 'info',
+          message: `Raw message: ${msg.data}`
+        }]);
       }
-    }, 2000);
+    });
 
-    return () => clearInterval(interval);
-  }, []);
+    return () => vlmSub.unsubscribe();
+  }, [ros, connected]);
 
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });

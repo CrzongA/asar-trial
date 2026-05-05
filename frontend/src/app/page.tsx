@@ -5,16 +5,12 @@ import dynamic from 'next/dynamic';
 
 const MissionMap = dynamic(() => import('@/components/MissionMap'), { ssr: false });
 import VideoPlayer from '@/components/VideoPlayer';
+import { RosProvider, useRos } from '@/components/RosProvider';
 import TelemetryDashboard from '@/components/TelemetryDashboard';
 import VLMConsole from '@/components/VLMConsole';
 
-export default function Home() {
-  const [rosConnected, setRosConnected] = useState(false);
-
-  useEffect(() => {
-    // In a real scenario, this connects to rosbridge_server
-    setTimeout(() => setRosConnected(true), 1500);
-  }, []);
+function HomeContent() {
+  const { connected } = useRos();
 
   return (
     <main className="min-h-screen bg-neutral-900 text-white p-6 font-sans selection:bg-cyan-500 selection:text-white">
@@ -27,9 +23,9 @@ export default function Home() {
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 px-4 py-2 bg-neutral-800 rounded-full border border-neutral-700">
-            <div className={`w-3 h-3 rounded-full ${rosConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
+            <div className={`w-3 h-3 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
             <span className="text-sm font-medium text-neutral-300">
-              {rosConnected ? 'ROS 2 Connected' : 'Connecting...'}
+              {connected ? 'ROS 2 Connected' : 'Connecting...'}
             </span>
           </div>
         </div>
@@ -57,5 +53,13 @@ export default function Home() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function Home() {
+  return (
+    <RosProvider>
+      <HomeContent />
+    </RosProvider>
   );
 }

@@ -11,13 +11,33 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
+import { useRos } from './RosProvider';
+import * as ROSLIB from 'roslib';
+
 export default function MissionMap() {
+  const { ros, connected } = useRos();
   const [mounted, setMounted] = useState(false);
-  const dronePosition: [number, number] = [47.397742, 8.545594]; // Zurich default PX4
+  const [dronePosition, setDronePosition] = useState<[number, number]>([47.397742, 8.545594]);
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!ros || !connected) return;
+
+    const gpsSub = new ROSLIB.Topic({
+      ros: ros,
+      name: '/fmu/out/vehicle_global_position',
+      messageType: 'px4_msgs/msg/VehicleGlobalPosition'
+    });
+
+    gpsSub.subscribe((msg: any) => {
+      setDronePosition([msg.lat, msg.lon]);
+    });
+
+    return () => gpsSub.unsubscribe();
+  }, [ros, connected]);
 
   if (!mounted) return <div className="bg-neutral-900 w-full h-full flex items-center justify-center">Loading Map...</div>;
 
