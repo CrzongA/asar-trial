@@ -1,7 +1,7 @@
 #!/bin/bash
-# ASAR Bridge Launcher: rosbridge_server + webrtc_streamer (MJPEG)
+# ASAR Bridge Launcher: mission_node + teleop_node + rosbridge_server + webrtc_streamer
 #
-# This script bridges the internal ROS 2 network to the web frontend.
+# Starts all ROS 2 flight-control and web-bridge nodes needed for the frontend.
 
 set -e
 
@@ -32,16 +32,29 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# --- 1. rosbridge_server (WebSocket port 9090) ---------------------------
-echo "[1/2] Starting rosbridge_server on ws://0.0.0.0:9090 ..."
+# --- 1. mission_node ------------------------------------------------------
+echo "[1/4] Starting mission_node ..."
+ros2 run mission_control mission_node &
+PIDS+=($!)
+
+# --- 2. teleop_node -------------------------------------------------------
+# Bridges /teleop/manual_input -> /fmu/in/manual_control_input at 50 Hz.
+# Must be running before any "take control" request so PX4 receives RC input
+# in POSITION mode; without it PX4 fires manual_control_signal_lost failsafe.
+echo "[2/4] Starting teleop_node ..."
+ros2 run mission_control teleop_node &
+PIDS+=($!)
+
+# --- 3. rosbridge_server (WebSocket port 9090) ---------------------------
+echo "[3/4] Starting rosbridge_server on ws://0.0.0.0:9090 ..."
 export ROS_DISABLE_LOANED_MESSAGES=1
 ros2 launch rosbridge_server rosbridge_websocket_launch.xml &
 PIDS+=($!)
 
-# --- 2. webrtc_streamer.py (MJPEG port 8080) -----------------------------
-echo "[2/2] Starting video streamer on http://0.0.0.0:8080 ..."
+# --- 4. webrtc_streamer.py (WebRTC port 8080) ----------------------------
+echo "[4/4] Starting video streamer on http://0.0.0.0:8080 ..."
 python3 "$(dirname "$0")/../middleware/webrtc_streamer.py" &
 PIDS+=($!)
 
-echo "Bridge active. Keep this terminal open."
+echo "All nodes active. Keep this terminal open."
 wait
