@@ -167,69 +167,83 @@ export default function PX4Flags() {
 
   const modeOverridden = status.navState !== status.navStateUserIntention;
 
+  // Per-section error/warning flags for header color coding
+  const modeError = status.failsafe || modeOverridden || status.failsafeDeferState === 2 || status.latestDisarmReason === 14;
+  const ctrlError = flags.manual_control_signal_lost || flags.offboard_control_signal_lost || flags.gcs_connection_lost;
+  const estError = flags.angular_velocity_invalid || flags.attitude_invalid || flags.local_altitude_invalid ||
+    flags.local_position_invalid || flags.local_velocity_invalid || flags.global_position_invalid ||
+    flags.home_position_invalid;
+  const fdError = flags.fd_critical_failure || flags.fd_esc_arming_failure || flags.fd_imbalanced_prop ||
+    flags.fd_motor_failure || flags.fd_alt_loss;
+  const batError = flags.battery_warning >= 2 || flags.battery_unhealthy || flags.battery_low_remaining_time;
+  const batWarn = !batError && flags.battery_warning === 1;
+  const otherError = flags.geofence_breached || flags.mission_failure || flags.wind_limit_exceeded ||
+    flags.flight_time_limit_exceeded || flags.navigator_failure || flags.auto_mission_missing ||
+    status.rcCalibrationInProgress;
+
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col flex-1 min-h-0">
       {/* ── top status chips (always visible) ── */}
       <div className="flex flex-row flex-nowrap gap-1 px-3 py-2 shrink-0 border-b border-neutral-800">
-        <StatusChip label="ARMED"     active={status.armed}       activeClass="bg-amber-700/50 border-amber-500 text-amber-200"  inactiveClass="bg-neutral-900 border-neutral-700 text-neutral-500" />
-        <StatusChip label="FAILSAFE"  active={status.failsafe}    activeClass="bg-red-700/60 border-red-500 text-red-200 animate-pulse" inactiveClass="bg-neutral-900 border-neutral-700 text-neutral-500" />
-        <StatusChip label="PREFLIGHT" active={status.preflightOk} activeClass="bg-green-800/50 border-green-600 text-green-200"  inactiveClass="bg-red-900/40 border-red-700 text-red-300" />
-        <StatusChip label="SAFETY"    active={status.safetyOff}   activeClass="bg-emerald-800/50 border-emerald-600 text-emerald-200" inactiveClass="bg-neutral-900 border-neutral-700 text-neutral-500" />
+        <StatusChip label="ARMED" active={status.armed} activeClass="bg-amber-700/50 border-amber-500 text-amber-200" inactiveClass="bg-neutral-900 border-neutral-700 text-neutral-500" />
+        <StatusChip label="FAILSAFE" active={status.failsafe} activeClass="bg-red-700/60 border-red-500 text-red-200 animate-pulse" inactiveClass="bg-neutral-900 border-neutral-700 text-neutral-500" />
+        <StatusChip label="PREFLIGHT" active={status.preflightOk} activeClass="bg-green-800/50 border-green-600 text-green-200" inactiveClass="bg-red-900/40 border-red-700 text-red-300" />
+        <StatusChip label="SAFETY" active={status.safetyOff} activeClass="bg-emerald-800/50 border-emerald-600 text-emerald-200" inactiveClass="bg-neutral-900 border-neutral-700 text-neutral-500" />
       </div>
 
       {/* ── scrollable section list ── */}
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2 flex flex-col gap-1.5 text-xs font-mono">
 
-        <Section title="Mode Tracking" defaultOpen>
-          <Row label="Active mode"    value={NAV_STATE_NAMES[status.navState] ?? `STATE_${status.navState}`}          valueClass={modeOverridden ? 'text-red-400' : 'text-cyan-300'} />
+        <Section title="Mode Tracking" defaultOpen hasError={modeError}>
+          <Row label="Active mode" value={NAV_STATE_NAMES[status.navState] ?? `STATE_${status.navState}`} valueClass={modeOverridden ? 'text-red-400' : 'text-cyan-300'} />
           <Row label="User intention" value={NAV_STATE_NAMES[status.navStateUserIntention] ?? `STATE_${status.navStateUserIntention}`} />
           {modeOverridden && <Alert>Mode overridden by failsafe</Alert>}
-          <Row label="Last arm"    value={ARM_DISARM_REASONS[status.latestArmReason]   ?? `#${status.latestArmReason}`} />
+          <Row label="Last arm" value={ARM_DISARM_REASONS[status.latestArmReason] ?? `#${status.latestArmReason}`} />
           <Row label="Last disarm" value={ARM_DISARM_REASONS[status.latestDisarmReason] ?? `#${status.latestDisarmReason}`}
-               valueClass={status.latestDisarmReason === 14 ? 'text-red-400 font-bold' : undefined} />
+            valueClass={status.latestDisarmReason === 14 ? 'text-red-400 font-bold' : undefined} />
           {status.failsafeDeferState === 2 && <Alert>Failsafe deferred (would trigger)</Alert>}
         </Section>
 
-        <Section title="Control Links" defaultOpen>
-          <FlagRow label="Manual ctrl signal lost"  bad={flags.manual_control_signal_lost} />
+        <Section title="Control Links" defaultOpen hasError={ctrlError}>
+          <FlagRow label="Manual ctrl signal lost" bad={flags.manual_control_signal_lost} />
           <FlagRow label="Offboard ctrl signal lost" bad={flags.offboard_control_signal_lost} />
-          <FlagRow label="GCS connection lost"       bad={flags.gcs_connection_lost} />
+          <FlagRow label="GCS connection lost" bad={flags.gcs_connection_lost} />
         </Section>
 
-        <Section title="Estimation">
-          <FlagRow label="Angular velocity invalid"   bad={flags.angular_velocity_invalid} />
-          <FlagRow label="Attitude invalid"           bad={flags.attitude_invalid} />
-          <FlagRow label="Local altitude invalid"     bad={flags.local_altitude_invalid} />
-          <FlagRow label="Local position invalid"     bad={flags.local_position_invalid} />
-          <FlagRow label="Local velocity invalid"     bad={flags.local_velocity_invalid} />
-          <FlagRow label="Global position invalid"    bad={flags.global_position_invalid} />
-          <FlagRow label="Home position invalid"      bad={flags.home_position_invalid} />
+        <Section title="Estimation" hasError={estError}>
+          <FlagRow label="Angular velocity invalid" bad={flags.angular_velocity_invalid} />
+          <FlagRow label="Attitude invalid" bad={flags.attitude_invalid} />
+          <FlagRow label="Local altitude invalid" bad={flags.local_altitude_invalid} />
+          <FlagRow label="Local position invalid" bad={flags.local_position_invalid} />
+          <FlagRow label="Local velocity invalid" bad={flags.local_velocity_invalid} />
+          <FlagRow label="Global position invalid" bad={flags.global_position_invalid} />
+          <FlagRow label="Home position invalid" bad={flags.home_position_invalid} />
         </Section>
 
-        <Section title="Failure Detector">
-          <FlagRow label="Critical failure"    bad={flags.fd_critical_failure} />
-          <FlagRow label="ESC arming failure"  bad={flags.fd_esc_arming_failure} />
-          <FlagRow label="Imbalanced prop"     bad={flags.fd_imbalanced_prop} />
-          <FlagRow label="Motor failure"       bad={flags.fd_motor_failure} />
-          <FlagRow label="Altitude loss"       bad={flags.fd_alt_loss} />
+        <Section title="Failure Detector" hasError={fdError}>
+          <FlagRow label="Critical failure" bad={flags.fd_critical_failure} />
+          <FlagRow label="ESC arming failure" bad={flags.fd_esc_arming_failure} />
+          <FlagRow label="Imbalanced prop" bad={flags.fd_imbalanced_prop} />
+          <FlagRow label="Motor failure" bad={flags.fd_motor_failure} />
+          <FlagRow label="Altitude loss" bad={flags.fd_alt_loss} />
         </Section>
 
-        <Section title="Battery">
+        <Section title="Battery" hasError={batError} hasWarning={batWarn}>
           <Row label="Warning level"
-               value={['OK', 'LOW', 'CRITICAL', 'EMERGENCY'][flags.battery_warning] ?? `${flags.battery_warning}`}
-               valueClass={flags.battery_warning === 0 ? 'text-green-400' : flags.battery_warning === 1 ? 'text-yellow-400' : 'text-red-400'} />
-          <FlagRow label="Battery unhealthy"       bad={flags.battery_unhealthy} />
-          <FlagRow label="Low remaining time"      bad={flags.battery_low_remaining_time} />
+            value={['OK', 'LOW', 'CRITICAL', 'EMERGENCY'][flags.battery_warning] ?? `${flags.battery_warning}`}
+            valueClass={flags.battery_warning === 0 ? 'text-green-400' : flags.battery_warning === 1 ? 'text-yellow-400' : 'text-red-400'} />
+          <FlagRow label="Battery unhealthy" bad={flags.battery_unhealthy} />
+          <FlagRow label="Low remaining time" bad={flags.battery_low_remaining_time} />
         </Section>
 
-        <Section title="Other">
-          <FlagRow label="Geofence breached"          bad={flags.geofence_breached} />
-          <FlagRow label="Mission failure"            bad={flags.mission_failure} />
-          <FlagRow label="Wind limit exceeded"        bad={flags.wind_limit_exceeded} />
+        <Section title="Other" hasError={otherError}>
+          <FlagRow label="Geofence breached" bad={flags.geofence_breached} />
+          <FlagRow label="Mission failure" bad={flags.mission_failure} />
+          <FlagRow label="Wind limit exceeded" bad={flags.wind_limit_exceeded} />
           <FlagRow label="Flight time limit exceeded" bad={flags.flight_time_limit_exceeded} />
-          <FlagRow label="Navigator failure"          bad={flags.navigator_failure} />
-          <FlagRow label="Auto mission missing"       bad={flags.auto_mission_missing} />
-          <FlagRow label="RC calibration active"      bad={status.rcCalibrationInProgress} />
+          <FlagRow label="Navigator failure" bad={flags.navigator_failure} />
+          <FlagRow label="Auto mission missing" bad={flags.auto_mission_missing} />
+          <FlagRow label="RC calibration active" bad={status.rcCalibrationInProgress} />
         </Section>
 
         <div className="text-neutral-700 text-[10px] pt-0.5">Updated {lastUpdate}</div>
@@ -250,20 +264,24 @@ function StatusChip({ label, active, activeClass, inactiveClass }: {
   );
 }
 
-function Section({ title, children, defaultOpen = false }: {
-  title: string; children: React.ReactNode; defaultOpen?: boolean;
+function Section({ title, children, defaultOpen = false, hasError = false, hasWarning = false }: {
+  title: string; children: React.ReactNode; defaultOpen?: boolean; hasError?: boolean; hasWarning?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const border = hasError ? 'border-red-800' : hasWarning ? 'border-yellow-800' : 'border-neutral-800';
+  const bg = hasError ? 'bg-red-900/25 hover:bg-red-900/40' : hasWarning ? 'bg-yellow-900/20 hover:bg-yellow-900/35' : 'bg-neutral-800/60 hover:bg-neutral-800';
+  const color = hasError ? 'text-red-400' : hasWarning ? 'text-yellow-400' : 'text-neutral-400 hover:text-neutral-200';
+  const dot = hasError ? '● ' : hasWarning ? '◐ ' : '';
   return (
-    <div className="bg-neutral-900 rounded-lg border border-neutral-800 overflow-hidden">
+    <div className={`bg-neutral-900 rounded-lg border ${border} `}>
       <button
         onClick={() => setOpen(o => !o)}
-        className="w-full flex flex-row items-center justify-between px-2 py-1.5 text-[10px] uppercase text-neutral-400 hover:text-neutral-200 bg-neutral-800/60 hover:bg-neutral-800 transition"
+        className={`w-full flex flex-row items-center justify-between px-2 py-1.5 text-[10px] uppercase ${color} ${bg} transition`}
       >
-        <span>{title}</span>
+        <span>{dot}{title}</span>
         <span className="text-neutral-600">{open ? '▲' : '▼'}</span>
       </button>
-      {open && <div className="px-2 py-1 flex flex-col gap-0.5">{children}</div>}
+      {open && <div className="px-2 py-1 flex flex-col gap-0.5 max-h-[200px] overflow-y-scroll">{children}</div>}
     </div>
   );
 }
