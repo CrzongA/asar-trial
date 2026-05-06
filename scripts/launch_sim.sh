@@ -51,7 +51,11 @@ fi
 
 # Prepend our custom-model directory so $REPO/sim/models/asar_drone is
 # discoverable on top of PX4's stock models (which gz_env.sh appended above).
-export GZ_SIM_RESOURCE_PATH="$REPO/sim/models:$GZ_SIM_RESOURCE_PATH"
+# Also include ext_collection/models for the outdoor world.
+GZ_MODELS="$REPO/sim/models:$REPO/sim/models/ext_collection/models"
+export GZ_SIM_RESOURCE_PATH="$GZ_MODELS${GZ_SIM_RESOURCE_PATH:+:$GZ_SIM_RESOURCE_PATH}"
+# Remove any double colons
+export GZ_SIM_RESOURCE_PATH=$(echo "$GZ_SIM_RESOURCE_PATH" | sed 's/::/:/g')
 
 # Headless rendering for server / CI environments.
 # export LIBGL_ALWAYS_SOFTWARE=1
@@ -84,11 +88,24 @@ PIDS+=($!)
 sleep 1
 
 # --- 2. Gazebo Harmonic with our world ------------------------------------
-echo "[2/4] Launching Gazebo with $REPO/sim/asar_world.sdf ..."
+# Logic to select the world file while keeping the logical name 'asar_world'
+# for PX4 compatibility.
+SELECTED_WORLD="${WORLD:-rubicon}"
+WORLD_PATH="$REPO/sim/${SELECTED_WORLD}.sdf"
+if [ ! -f "$WORLD_PATH" ]; then
+    echo "WARNING: World file $WORLD_PATH not found. Defaulting to asar_world." >&2
+    WORLD_PATH="$REPO/sim/asar_world.sdf"
+fi
+
+# We force the logical WORLD name to 'asar_world' because PX4's sensors
+# and bridge expect this name for the vehicle connection.
+export WORLD="asar_world"
+
+echo "[2/4] Launching Gazebo with $WORLD_PATH ..."
 # We use --headless-rendering (EGL) for hardware acceleration on the GPU.
 # We remove xvfb-run to prevent Gazebo from falling back to software GLX.
 env DRI_PRIME=1 \
-    gz sim -v 4 -s -r --headless-rendering "$REPO/sim/asar_world.sdf" &
+    gz sim -v 4 -s -r --headless-rendering "$WORLD_PATH" &
 PIDS+=($!)
 sleep 6
 
@@ -115,11 +132,14 @@ echo "[3/4] Starting PX4 SITL (x500_gimbal in asar_world)..."
 (
     cd "$PX4_DIR" && \
     PX4_GZ_STANDALONE=1 \
-    PX4_GZ_WORLD=asar_world \
+    PX4_GZ_WORLD="$WORLD" \
     PX4_PARAM_COM_RC_IN_MODE=1 \
     PX4_PARAM_COM_RCL_EXCEPT=4 \
     PX4_PARAM_NAV_DLL_ACT=0 \
     PX4_PARAM_CBRK_SUPPLY_CHK=894281 \
+    PX4_PARAM_MPC_LAND_SPEED=0.7 \
+    PX4_PARAM_LND_MC_THR_RANGE=0.15 \
+    PX4_PARAM_COM_DISARM_LAND=1.0 \
     make px4_sitl gz_x500_gimbal
 ) &
 PIDS+=($!)
@@ -129,7 +149,7 @@ sleep 8
 # Camera: the gimbal cam has no explicit <topic>, so Gazebo names it by entity path.
 # Clock: needed so ROS nodes use sim time from PX4/Gazebo.
 echo "[4/4] Starting ros_gz_bridge (camera + clock)..."
-CAM_GZ_TOPIC="/world/asar_world/model/x500_gimbal_0/link/camera_link/sensor/camera/image"
+CAM_GZ_TOPIC="/world/$WORLD/model/x500_gimbal_0/link/camera_link/sensor/camera/image"
 ros2 run ros_gz_bridge parameter_bridge \
     "${CAM_GZ_TOPIC}@sensor_msgs/msg/Image[gz.msgs.Image" \
     "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock" \
