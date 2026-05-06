@@ -17,10 +17,10 @@ export default function VideoPlayer() {
   return (
     <div className="w-full h-full bg-neutral-900 flex items-center justify-center relative overflow-hidden">
       {streamUrl ? (
-        <img 
-          src={streamUrl} 
+        <img
+          src={streamUrl}
           alt="Live Camera Feed"
-          className="w-full h-full object-cover"
+          className="max-w-full max-h-full object-contain"
           onError={(e) => {
             (e.target as HTMLImageElement).style.display = 'none';
             document.getElementById('mjpeg-error')?.classList.remove('hidden');

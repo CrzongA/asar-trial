@@ -17,22 +17,29 @@ export const RosProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
-    const rosInstance = new ROSLIB.Ros({
-      url: 'ws://localhost:9090'
-    });
+    const host =
+      typeof window !== 'undefined' && window.location.hostname
+        ? window.location.hostname
+        : 'localhost';
+    const port = process.env.NEXT_PUBLIC_ROSBRIDGE_PORT ?? '9090';
+    const proto = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const url = process.env.NEXT_PUBLIC_ROSBRIDGE_URL ?? `${proto}://${host}:${port}`;
+
+    console.log('[ROS] connecting to', url);
+    const rosInstance = new ROSLIB.Ros({ url });
 
     rosInstance.on('connection', () => {
-      console.log('Connected to websocket server.');
+      console.log('[ROS] connection open');
       setConnected(true);
     });
 
     rosInstance.on('error', (error: any) => {
-      console.log('Error connecting to websocket server: ', error);
+      console.warn('[ROS] error', error);
       setConnected(false);
     });
 
     rosInstance.on('close', () => {
-      console.log('Connection to websocket server closed.');
+      console.log('[ROS] connection closed');
       setConnected(false);
     });
 

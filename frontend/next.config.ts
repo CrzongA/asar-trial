@@ -2,9 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   /* config options here */
-  allowedDevOrigins: ['165.245.128.87', 'preblooming-unlabelled-abby.ngrok-free.dev'],
+  allowedDevOrigins: ['165.245.128.87', 'preblooming-unlabelled-abby.ngrok-free.dev', '192.168.1.121'],
   async rewrites() {
     return [
+      // Legacy MJPEG endpoints (kept for debugging)
       {
         source: '/api/video',
         destination: 'http://127.0.0.1:8080/video',
@@ -12,6 +13,15 @@ const nextConfig: NextConfig = {
       {
         source: '/api/snapshot',
         destination: 'http://127.0.0.1:8080/snapshot',
+      },
+      // WebRTC signaling endpoints
+      {
+        source: '/api/offer',
+        destination: 'http://127.0.0.1:8080/offer',
+      },
+      {
+        source: '/api/config',
+        destination: 'http://127.0.0.1:8080/config',
       },
     ];
   },
