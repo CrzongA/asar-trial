@@ -67,13 +67,13 @@ export default function VLMConsole() {
   };
 
   return (
-    <div className="bg-neutral-800 rounded-xl border border-neutral-700 p-5 shadow-lg flex-grow flex flex-col min-h-[300px]">
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-lg font-semibold text-purple-400">VLM Reason/Act Log</h2>
+    <div className="p-4 flex-1 min-h-0 flex flex-col">
+      <div className="flex justify-between items-center mb-3">
+        <h2 className="text-base font-semibold text-purple-400">VLM Reason/Act Log</h2>
         <span className="text-xs bg-neutral-900 px-2 py-1 rounded text-neutral-400 border border-neutral-700">vLLM Backend</span>
       </div>
-      
-      <div className="flex-grow bg-neutral-900 rounded-lg p-3 border border-neutral-800 overflow-y-auto font-mono text-xs">
+
+      <div className="flex-1 min-h-0 bg-neutral-900 rounded-lg p-3 border border-neutral-800 overflow-y-auto font-mono text-xs">
         {logs.map(log => (
           <div key={log.id} className="mb-2 border-l-2 border-neutral-700 pl-2">
             <span className="text-neutral-500">[{log.timestamp}]</span>{' '}
