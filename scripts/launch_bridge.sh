@@ -13,7 +13,10 @@ else
     exit 1
 fi
 
-# Overlay workspace
+# Source virtual environment and workspace
+if [ -f "$(dirname "$0")/../.venv/bin/activate" ]; then
+    source "$(dirname "$0")/../.venv/bin/activate"
+fi
 if [ -f "$(dirname "$0")/../ros_ws/install/setup.bash" ]; then
     source "$(dirname "$0")/../ros_ws/install/setup.bash"
 fi
@@ -31,12 +34,13 @@ trap cleanup EXIT INT TERM
 
 # --- 1. rosbridge_server (WebSocket port 9090) ---------------------------
 echo "[1/2] Starting rosbridge_server on ws://0.0.0.0:9090 ..."
+export ROS_DISABLE_LOANED_MESSAGES=1
 ros2 launch rosbridge_server rosbridge_websocket_launch.xml &
 PIDS+=($!)
 
 # --- 2. webrtc_streamer.py (MJPEG port 8080) -----------------------------
 echo "[2/2] Starting video streamer on http://0.0.0.0:8080 ..."
-python3 "$(dirname "$0")/webrtc_streamer.py" &
+python3 "$(dirname "$0")/../middleware/webrtc_streamer.py" &
 PIDS+=($!)
 
 echo "Bridge active. Keep this terminal open."

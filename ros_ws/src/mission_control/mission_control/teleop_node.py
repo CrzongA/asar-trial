@@ -46,6 +46,7 @@ class TeleopBridge(Node):
         self.create_subscription(
             ManualControlSetpoint, '/teleop/manual_input',
             self._on_input, PX4_QOS)
+        # PX4 listens on the unversioned /fmu/in/manual_control_input on this build.
         self.pub = self.create_publisher(
             ManualControlSetpoint, '/fmu/in/manual_control_input', PX4_QOS)
 

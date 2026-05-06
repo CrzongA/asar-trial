@@ -82,7 +82,10 @@ class MissionNode(Node):
             VehicleStatus, '/fmu/out/vehicle_status_v4',
             self._on_status, PX4_QOS)
 
-        # PX4 commands
+        # PX4 commands. NOTE: /fmu/in/* topics are unversioned on this PX4 build
+        # (v1.17 alpha) — the agent only creates a _v<N> suffix when the firmware's
+        # message hash diverges from px4_msgs' default. Publishing to a _v1 topic
+        # PX4 isn't subscribed to silently no-ops (subscriber count = 0).
         self.pub_offboard = self.create_publisher(
             OffboardControlMode, '/fmu/in/offboard_control_mode', PX4_QOS)
         self.pub_setpoint = self.create_publisher(
@@ -114,9 +117,13 @@ class MissionNode(Node):
 
     # ---- subscriptions ----------------------------------------------------
     def _on_local_pos(self, msg: VehicleLocalPosition) -> None:
+        if self.last_local_pos is None:
+            self.get_logger().info('First VehicleLocalPosition received.')
         self.last_local_pos = msg
 
     def _on_status(self, msg: VehicleStatus) -> None:
+        if self.last_status is None:
+            self.get_logger().info('First VehicleStatus received.')
         self.last_status = msg
 
     def _on_goto(self, msg: PoseStamped) -> None:
@@ -153,15 +160,37 @@ class MissionNode(Node):
             self.setpoint_count += 1
 
         if self.state == State.ARM:
-            # Stream setpoints first so PX4 will accept OFFBOARD, then arm + switch mode.
-            if self.setpoint_count >= 10:
-                self._send_mode(PX4_MAIN_MODE_OFFBOARD)
-                self._send_arm(True)
+            # Stream setpoints first so PX4 will accept OFFBOARD
+            if self.setpoint_count < 10:
+                return
+
+            # Check if we are already in the target state
+            is_armed = self.last_status and self.last_status.arming_state == VehicleStatus.ARMING_STATE_ARMED
+            is_offboard = self.last_status and self.last_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD
+
+            if is_armed and is_offboard:
                 self._enter(State.TAKEOFF)
+            else:
+                # Retry every 10 ticks (0.5s)
+                if self.setpoint_count % 10 == 0:
+                    if not is_offboard:
+                        self.get_logger().info('Requesting OFFBOARD mode...')
+                        self._send_mode(PX4_MAIN_MODE_OFFBOARD)
+                    if not is_armed:
+                        if self.last_status and not self.last_status.pre_flight_checks_pass:
+                            self.get_logger().warning('Pre-flight checks failing! PX4 may refuse to arm.', throttle_duration_sec=2.0)
+                        self.get_logger().info('Requesting ARM...')
+                        self._send_arm(True)
 
         elif self.state == State.TAKEOFF:
             if self._reached(self.target_ned, tol=0.4):
                 self._enter(State.HOLD)
+            elif self.setpoint_count % 20 == 0:
+                # Periodically re-verify we are still in offboard/armed
+                if self.last_status and (self.last_status.arming_state != VehicleStatus.ARMING_STATE_ARMED or 
+                                       self.last_status.nav_state != VehicleStatus.NAVIGATION_STATE_OFFBOARD):
+                    self.get_logger().warning('Lost OFFBOARD or ARMED state during takeoff! Reverting to ARM.')
+                    self._enter(State.ARM)
 
         elif self.state == State.HOLD:
             pass  # hover at target_ned until the next /mission/goto or /mission/land

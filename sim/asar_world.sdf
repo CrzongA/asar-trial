@@ -5,23 +5,14 @@
       <max_step_size>0.001</max_step_size>
       <real_time_factor>1.0</real_time_factor>
     </physics>
-    <plugin
-      filename="gz-sim-physics-system"
-      name="gz::sim::systems::Physics">
-    </plugin>
-    <plugin
-      filename="gz-sim-sensors-system"
-      name="gz::sim::systems::Sensors">
-      <render_engine>ogre2</render_engine>
-    </plugin>
-    <plugin
-      filename="gz-sim-scene-broadcaster-system"
-      name="gz::sim::systems::SceneBroadcaster">
-    </plugin>
-    <plugin
-      filename="gz-sim-user-commands-system"
-      name="gz::sim::systems::UserCommands">
-    </plugin>
+    <!--
+      No <plugin> blocks at world level: declaring even one here causes Gazebo
+      Harmonic to ignore GZ_SIM_SERVER_CONFIG_PATH entirely, which means PX4's
+      server.config (IMU, NavSat, magnetometer, air-pressure, sensors-with-ogre2,
+      etc.) does not load and the drone's sensors stay silent. launch_sim.sh
+      sources $PX4_DIR/build/px4_sitl_default/rootfs/gz_env.sh, which exports
+      GZ_SIM_SERVER_CONFIG_PATH; gz sim then loads PX4's full plugin set.
+    -->
 
     <light type="directional" name="sun">
       <cast_shadows>true</cast_shadows>
@@ -36,6 +27,21 @@
       </attenuation>
       <direction>-0.5 0.1 -0.9</direction>
     </light>
+
+    <!--
+      Earth-referenced origin for the NavSat plugin. Without this block the
+      gz-sim-navsat-system has no surface model and publishes NavSat messages
+      with empty lat/lon, which PX4's EKF rejects (global_position_invalid stays
+      true and prevents arming). Coordinates match PX4's stock default.sdf
+      (Zurich Hardbruecke).
+    -->
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>47.397971057728974</latitude_deg>
+      <longitude_deg>8.546163739800146</longitude_deg>
+      <elevation>0</elevation>
+    </spherical_coordinates>
 
     <model name="ground_plane">
       <static>true</static>

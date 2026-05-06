@@ -39,4 +39,4 @@ colcon build --symlink-install --packages-select Micro-XRCE-DDS-Agent
 echo ""
 echo "=== Installation Complete ==="
 echo "Re-source the workspace: source ros_ws/install/setup.bash"
-echo "MicroXRCEAgent is now on PATH; sim_config/launch_sim.sh will use it."
+echo "MicroXRCEAgent is now on PATH; scripts/launch_sim.sh will use it."

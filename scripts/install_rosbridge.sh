@@ -46,4 +46,4 @@ colcon build --symlink-install \
 
 echo ""
 echo "=== Installation Complete ==="
-echo "You can now run the bridge using: bash infrastructure/launch_bridge.sh"
+echo "You can now run the bridge using: bash scripts/launch_bridge.sh"

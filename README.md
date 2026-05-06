@@ -59,19 +59,25 @@ The core design principle is a **Reason-Act-Observe** loop, which reconciles the
 
 ```
 asar-trial/
-├── sim_config/
-│   ├── asar_world.sdf          # Gazebo world: drone, camera, red-target cylinder
-│   └── launch_sim.sh           # Headless Gazebo launch + ros_gz_bridge
+├── sim/
+│   ├── asar_world.sdf          # Gazebo world: ground plane, red-target cylinder
+│   └── models/                 # Custom Gazebo models (asar_drone wraps x500_gimbal)
+│
+├── middleware/
+│   ├── docker-compose.yml      # vLLM (ROCm) service definition
+│   ├── webrtc_streamer.py      # MJPEG + WebRTC signaling server (port 8080)
+│   └── webrtc_streamer_backup.py
+│
+├── scripts/
+│   ├── launch_sim.sh           # Headless Gazebo + PX4 SITL + ros_gz_bridge
+│   ├── launch_bridge.sh        # rosbridge_server + webrtc_streamer
+│   ├── install_xrce_agent.sh   # Builds Micro-XRCE-DDS-Agent v2.4.3 into ros_ws
+│   └── install_rosbridge.sh    # Builds rosbridge into ros_ws
 │
 ├── ros_ws/
 │   └── src/
 │       ├── vlm_agent/          # Observe+Reason node → /vlm/target_detections
 │       └── mission_control/    # Act node, consumes VLM detections → PX4 waypoints
-│
-├── infrastructure/
-│   ├── docker-compose.yml      # vLLM (ROCm) + Micro-XRCE-DDS agent
-│   ├── webrtc_streamer.py      # MJPEG + WebRTC signaling server (port 8080)
-│   └── webrtc_streamer_backup.py
 │
 ├── frontend/
 │   └── src/
@@ -138,7 +144,7 @@ Vendor Micro-XRCE-DDS-Agent (eProsima v2.4.3, the version pinned for Jazzy by PX
 source ros_ws/install/setup.bash
 ```
 
-This produces `MicroXRCEAgent` on `PATH`, which `sim_config/launch_sim.sh` invokes natively (no Docker needed for the DDS agent).
+This produces `MicroXRCEAgent` on `PATH`, which `scripts/launch_sim.sh` invokes natively (no Docker needed for the DDS agent).
 
 For the rest of the workspace:
 
@@ -164,26 +170,26 @@ Each component runs in its own terminal. Source the ROS workspace (`source ros_w
 ### Simulator
 
 ```bash
-bash sim_config/launch_sim.sh
+bash scripts/launch_sim.sh
 ```
 
-Starts Gazebo Harmonic headlessly (xvfb-run + llvmpipe) and bridges `/camera/image_raw` into ROS 2.
+Starts Gazebo Harmonic headlessly (xvfb-run) and bridges `/camera/image_raw` into ROS 2.
 
 ### Infrastructure services (vLLM)
 
 ```bash
-docker compose -f infrastructure/docker-compose.yml up
+docker compose -f middleware/docker-compose.yml up
 ```
 
-Starts the Qwen3-VL vLLM inference server on **port 8000**. The Micro-XRCE-DDS agent on **port 8888** is launched natively by `sim_config/launch_sim.sh` (see [Setup §2](#2-build-ros-workspace)).
+Starts the Qwen3-VL vLLM inference server on **port 8000**. The Micro-XRCE-DDS agent on **port 8888** is launched natively by `scripts/launch_sim.sh` (see [Setup §2](#2-build-ros-workspace)).
 
-### Video streamer
+### Video streamer + rosbridge
 
 ```bash
-python infrastructure/webrtc_streamer.py
+bash scripts/launch_bridge.sh
 ```
 
-Serves MJPEG at `http://localhost:8080/video`, single-frame snapshots at `/snapshot`, and WebRTC signaling at `/offer`.
+Serves MJPEG at `http://localhost:8080/video`, single-frame snapshots at `/snapshot`, and WebRTC signaling at `/offer`. Also starts rosbridge_server on WebSocket port 9090.
 
 ### ROS nodes
 
