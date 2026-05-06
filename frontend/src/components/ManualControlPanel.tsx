@@ -40,7 +40,9 @@ export default function ManualControlPanel() {
         timestamp: ts,
         timestamp_sample: ts,
         valid: true,
-        data_source: 1,
+        // px4_msgs/ManualControlSetpoint.SOURCE_MAVLINK_0 = 2 (1 = SOURCE_RC,
+        // which PX4 rejects when COM_RC_IN_MODE=1).
+        data_source: 2,
         roll: clamp(right.x),
         pitch: clamp(right.y),
         yaw: clamp(left.x),

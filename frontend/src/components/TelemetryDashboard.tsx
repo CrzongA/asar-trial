@@ -54,6 +54,8 @@ type Telemetry = {
   roll: number;
   pitch: number;
   yaw: number;
+  lat: number | null;
+  lon: number | null;
 };
 
 export default function TelemetryDashboard() {
@@ -70,6 +72,8 @@ export default function TelemetryDashboard() {
     roll: 0,
     pitch: 0,
     yaw: 0,
+    lat: null,
+    lon: null,
   });
 
   useEffect(() => {
@@ -94,6 +98,11 @@ export default function TelemetryDashboard() {
       ros,
       name: '/fmu/out/vehicle_attitude',
       messageType: 'px4_msgs/msg/VehicleAttitude',
+    });
+    const gpsSub = new ROSLIB.Topic({
+      ros,
+      name: '/fmu/out/vehicle_global_position',
+      messageType: 'px4_msgs/msg/VehicleGlobalPosition',
     });
 
     posSub.subscribe((msg: any) => {
@@ -128,11 +137,20 @@ export default function TelemetryDashboard() {
       setT(prev => ({ ...prev, roll: e.roll, pitch: e.pitch, yaw: e.yaw }));
     });
 
+    gpsSub.subscribe((msg: any) => {
+      setT(prev => ({
+        ...prev,
+        lat: msg.lat,
+        lon: msg.lon,
+      }));
+    });
+
     return () => {
       posSub.unsubscribe();
       statusSub.unsubscribe();
       batSub.unsubscribe();
       attSub.unsubscribe();
+      gpsSub.unsubscribe();
     };
   }, [ros, connected]);
 
@@ -163,6 +181,19 @@ export default function TelemetryDashboard() {
           subClass={warning.color}
         />
         <Tile label="FLIGHT MODE" value={t.mode} valueClass="text-yellow-400 text-base" />
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <Tile
+          label="LATITUDE"
+          value={t.lat != null ? t.lat.toFixed(6) : '—'}
+          valueClass="text-sm font-semibold text-cyan-200"
+        />
+        <Tile
+          label="LONGITUDE"
+          value={t.lon != null ? t.lon.toFixed(6) : '—'}
+          valueClass="text-sm font-semibold text-cyan-200"
+        />
       </div>
 
       <div className="grid grid-cols-2 gap-2 mb-3">
