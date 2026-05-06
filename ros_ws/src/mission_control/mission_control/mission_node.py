@@ -189,6 +189,11 @@ class MissionNode(Node):
             if new_state not in (State.TELEOP_WARMUP, State.TELEOP):
                 self.teleop_warmup_count = 0
 
+            # Trigger landing once upon entry
+            if new_state == State.LAND:
+                self.get_logger().info('Sending NAV_LAND command...')
+                self._send_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
+
     def _tick(self) -> None:
         # Stream offboard heartbeat for every active state (not just OFFBOARD-controlled ones).
         # This prevents "offboard signal lost" failsafe during the OFFBOARD→POSITION mode
@@ -198,7 +203,7 @@ class MissionNode(Node):
         if self.state != State.IDLE:
             self._publish_offboard_mode()
 
-        if self.state in (State.ARM, State.TAKEOFF, State.HOLD, State.GOTO, State.LAND):
+        if self.state in (State.ARM, State.TAKEOFF, State.HOLD, State.GOTO):
             self._publish_setpoint(self.target_ned)
             self.setpoint_count += 1
 
@@ -268,8 +273,9 @@ class MissionNode(Node):
                 pass
 
         elif self.state == State.LAND:
-            self._send_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
+            # Command was sent once in _enter(). Wait for PX4 to disarm after landing.
             if self.last_status and self.last_status.arming_state == VehicleStatus.ARMING_STATE_DISARMED:
+                self.get_logger().info('Drone disarmed -> landing complete.')
                 self._enter(State.IDLE)
 
     # ---- helpers ----------------------------------------------------------
