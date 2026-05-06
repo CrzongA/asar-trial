@@ -131,6 +131,17 @@ pip install -r requirements.txt
 
 ### 2. Build ROS workspace
 
+Vendor Micro-XRCE-DDS-Agent (eProsima v2.4.3, the version pinned for Jazzy by PX4) into `ros_ws/src` and build it alongside the workspace:
+
+```bash
+./scripts/install_xrce_agent.sh
+source ros_ws/install/setup.bash
+```
+
+This produces `MicroXRCEAgent` on `PATH`, which `sim_config/launch_sim.sh` invokes natively (no Docker needed for the DDS agent).
+
+For the rest of the workspace:
+
 ```bash
 cd ros_ws
 colcon build --symlink-install
@@ -158,13 +169,13 @@ bash sim_config/launch_sim.sh
 
 Starts Gazebo Harmonic headlessly (xvfb-run + llvmpipe) and bridges `/camera/image_raw` into ROS 2.
 
-### Infrastructure services (vLLM + DDS agent)
+### Infrastructure services (vLLM)
 
 ```bash
 docker compose -f infrastructure/docker-compose.yml up
 ```
 
-Starts the Qwen3-VL vLLM inference server on **port 8000** and the Micro-XRCE-DDS agent on **port 8888**.
+Starts the Qwen3-VL vLLM inference server on **port 8000**. The Micro-XRCE-DDS agent on **port 8888** is launched natively by `sim_config/launch_sim.sh` (see [Setup §2](#2-build-ros-workspace)).
 
 ### Video streamer
 
