@@ -85,7 +85,9 @@ sleep 1
 
 # --- 2. Gazebo Harmonic with our world ------------------------------------
 echo "[2/4] Launching Gazebo with $REPO/sim/asar_world.sdf ..."
-xvfb-run -a -s "-screen 0 1280x720x24" \
+# We use --headless-rendering (EGL) for hardware acceleration on the GPU.
+# We remove xvfb-run to prevent Gazebo from falling back to software GLX.
+env DRI_PRIME=1 \
     gz sim -v 4 -s -r --headless-rendering "$REPO/sim/asar_world.sdf" &
 PIDS+=($!)
 sleep 6
