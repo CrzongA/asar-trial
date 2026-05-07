@@ -143,7 +143,7 @@ export default function MissionMap() {
         <MapClickHandler onClick={add} />
       </MapContainer>
 
-      <div className="absolute top-2 left-2 z-[400] bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-neutral-700 shadow-xl">
+      <div className="absolute bottom-2 left-2 z-[400] bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-neutral-700 shadow-xl">
         <h3 className="text-xs font-bold text-neutral-300">MISSION MAP</h3>
       </div>
 

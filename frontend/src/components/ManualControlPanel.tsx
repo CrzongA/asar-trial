@@ -14,8 +14,8 @@ type StickValue = { x: number; y: number };
 
 export default function ManualControlPanel() {
   const { ros, connected } = useRos();
-  const [collapsed, setCollapsed] = useState(true);
   const [engaged, setEngaged] = useState(false);
+  const [gimbalOpen, setGimbalOpen] = useState(false);
 
   const leftRef = useRef<StickValue>({ x: 0, y: 0 });
   const rightRef = useRef<StickValue>({ x: 0, y: 0 });
@@ -120,77 +120,110 @@ export default function ManualControlPanel() {
   };
 
   return (
-    <div
-      className={`bg-neutral-900 border-t border-neutral-700 transition-all duration-200 ${
-        collapsed ? 'h-12' : 'h-72'
-      } flex flex-col`}
-    >
-      <div className="flex items-center justify-between px-4 h-12 shrink-0 border-b border-neutral-800">
-        <button
-          onClick={() => setCollapsed(c => !c)}
-          className="flex items-center gap-2 text-neutral-300 hover:text-white"
+    <div className="pointer-events-none">
+      {/* Side Trigger Button for Gimbal */}
+      <button
+        onClick={() => setGimbalOpen(!gimbalOpen)}
+        className="fixed right-0 top-1/2 -translate-y-1/2 z-[70] pointer-events-auto bg-amber-600/20 hover:bg-amber-600/40 border-y border-l border-amber-500/50 text-amber-300 py-6 px-1.5 rounded-l-2xl transition-all duration-300 group flex flex-col items-center gap-4 shadow-2xl backdrop-blur-md"
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`transition-transform duration-500 ${gimbalOpen ? 'rotate-180' : ''}`}
         >
-          <span
-            className={`inline-block transition-transform ${collapsed ? '' : 'rotate-180'}`}
-          >
-            ▲
-          </span>
-          <span className="text-sm font-semibold">Manual Control</span>
-        </button>
-        {!collapsed && (
-          <button
-            onClick={() => setEngaged(e => !e)}
-            disabled={!connected}
-            className={`px-3 py-1 rounded text-xs font-mono font-semibold border transition disabled:opacity-40 ${
-              engaged
-                ? 'bg-red-600/30 border-red-500 text-red-300 hover:bg-red-600/40'
-                : 'bg-emerald-600/20 border-emerald-500 text-emerald-300 hover:bg-emerald-600/30'
-            }`}
-          >
-            {engaged ? 'RELEASE CONTROL' : 'TAKE CONTROL'}
-          </button>
-        )}
-        {collapsed && engaged && (
-          <span className="text-xs font-mono text-red-400 animate-pulse">● LIVE TELEOP</span>
-        )}
+          <path d="M15 18l-6-6 6-6" />
+        </svg>
+        <span className="whitespace-nowrap uppercase text-[10px] font-bold tracking-tighter [writing-mode:vertical-lr] rotate-180 py-2">
+          Camera Control
+        </span>
+      </button>
+
+      {/* Independent Gimbal Block */}
+      <div
+        className={`fixed right-10 top-1/2 -translate-y-1/2 z-[65] pointer-events-auto bg-neutral-900/90 backdrop-blur-2xl p-6 rounded-3xl border border-neutral-700/50 shadow-2xl transition-all duration-500 ease-in-out transform ${
+          gimbalOpen ? 'translate-x-0 opacity-100' : 'translate-x-20 opacity-0 pointer-events-none'
+        }`}
+      >
+        <StickBox label="Gimbal Control" subLabel="Y: tilt  X: pan">
+          <Joystick
+            size={140}
+            baseColor="#111827"
+            stickColor="#f59e0b"
+            throttle={50}
+            move={handleGimbal}
+            stop={handleGimbalStop}
+          />
+        </StickBox>
       </div>
 
-      {!collapsed && (
-        <div className="flex-1 flex items-center justify-around px-6 py-3">
-          <StickBox label="Throttle / Yaw" subLabel="Y: throttle  X: yaw" disabled={!engaged}>
-            <Joystick
-              size={140}
-              baseColor="#1f2937"
-              stickColor="#06b6d4"
-              throttle={50}
-              disabled={!engaged}
-              move={handleLeft}
-              stop={handleLeftStop}
-            />
-          </StickBox>
-          <StickBox label="Pitch / Roll" subLabel="Y: pitch  X: roll" disabled={!engaged}>
-            <Joystick
-              size={140}
-              baseColor="#1f2937"
-              stickColor="#06b6d4"
-              throttle={50}
-              disabled={!engaged}
-              move={handleRight}
-              stop={handleRightStop}
-            />
-          </StickBox>
-          <StickBox label="Gimbal Pan / Tilt" subLabel="Y: tilt  X: pan">
-            <Joystick
-              size={140}
-              baseColor="#1f2937"
-              stickColor="#f59e0b"
-              throttle={50}
-              move={handleGimbal}
-              stop={handleGimbalStop}
-            />
-          </StickBox>
+      {/* Floating Controls Overlay */}
+      <div className="fixed inset-0 pointer-events-none z-[60] flex flex-col justify-end p-8">
+        <div className="flex justify-between items-end w-full">
+          {/* Left Block: Throttle/Yaw */}
+          <div
+            className={`pointer-events-auto bg-neutral-900/80 backdrop-blur-xl p-6 rounded-3xl border border-neutral-700/50 shadow-2xl transition-all duration-700 ease-out transform ${
+              engaged ? 'translate-y-0 opacity-100 scale-100' : 'translate-y-32 opacity-0 scale-90'
+            }`}
+          >
+            <StickBox label="Throttle / Yaw" subLabel="Y: throttle  X: yaw" disabled={!engaged}>
+              <Joystick
+                size={140}
+                baseColor="#111827"
+                stickColor="#06b6d4"
+                throttle={50}
+                disabled={!engaged}
+                move={handleLeft}
+                stop={handleLeftStop}
+              />
+            </StickBox>
+          </div>
+
+          {/* Center: Take Control Button */}
+          <div className="pointer-events-auto flex flex-col items-center gap-3">
+            {engaged && (
+              <div className="px-3 py-1 bg-red-500/20 border border-red-500/50 rounded-full text-[10px] font-mono text-red-400 animate-pulse">
+                LIVE TELEOP ACTIVE
+              </div>
+            )}
+            <button
+              onClick={() => setEngaged(e => !e)}
+              disabled={!connected}
+              className={`px-6 py-2.5 rounded-2xl text-xs font-bold tracking-widest border-2 transition-all duration-300 shadow-xl disabled:opacity-40 hover:scale-105 active:scale-95 ${
+                engaged
+                  ? 'bg-red-600/20 border-red-500 text-red-300 hover:bg-red-600/30'
+                  : 'bg-emerald-600/20 border-emerald-500 text-emerald-300 hover:bg-emerald-600/30'
+              }`}
+            >
+              {engaged ? 'RELEASE CONTROL' : 'TAKE CONTROL'}
+            </button>
+          </div>
+
+          {/* Right Block: Pitch/Roll */}
+          <div
+            className={`pointer-events-auto bg-neutral-900/80 backdrop-blur-xl p-6 rounded-3xl border border-neutral-700/50 shadow-2xl transition-all duration-700 ease-out transform ${
+              engaged ? 'translate-y-0 opacity-100 scale-100' : 'translate-y-32 opacity-0 scale-90'
+            }`}
+          >
+            <StickBox label="Pitch / Roll" subLabel="Y: pitch  X: roll" disabled={!engaged}>
+              <Joystick
+                size={140}
+                baseColor="#111827"
+                stickColor="#06b6d4"
+                throttle={50}
+                disabled={!engaged}
+                move={handleRight}
+                stop={handleRightStop}
+              />
+            </StickBox>
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

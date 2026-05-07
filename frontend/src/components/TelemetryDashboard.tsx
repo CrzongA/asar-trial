@@ -169,7 +169,7 @@ export default function TelemetryDashboard() {
     <div className="p-2 flex-1 overflow-y-auto scrollbar-hide">
       <h2 className="text-sm font-bold mb-2 text-cyan-400 uppercase tracking-wider">Flight Telemetry</h2>
 
-      <div className="grid grid-cols-2 gap-1.5 mb-2">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-1.5 mb-2">
         <Tile label="ALTITUDE" value={t.alt.toFixed(1)} unit="m" />
         <Tile label="GROUND SPEED" value={t.speed.toFixed(1)} unit="m/s" />
         <Tile
@@ -183,7 +183,7 @@ export default function TelemetryDashboard() {
         <Tile label="MODE" value={t.mode} valueClass="text-yellow-400 text-sm" />
       </div>
 
-      <div className="grid grid-cols-2 gap-1.5 mb-2">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-1.5 mb-2">
         <Tile
           label="LATITUDE"
           value={t.lat != null ? t.lat.toFixed(6) : '—'}
@@ -194,9 +194,6 @@ export default function TelemetryDashboard() {
           value={t.lon != null ? t.lon.toFixed(6) : '—'}
           valueClass="text-[11px] font-semibold text-cyan-200"
         />
-      </div>
-
-      <div className="grid grid-cols-2 gap-1.5 mb-2">
         <div
           className={`rounded-lg p-1.5 border text-xs font-mono flex flex-col justify-center ${
             t.armed

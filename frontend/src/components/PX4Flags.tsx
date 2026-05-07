@@ -192,7 +192,7 @@ export default function PX4Flags() {
       </div>
 
       {/* ── scrollable section list ── */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2 flex flex-col gap-1.5 text-xs font-mono">
+      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 text-xs font-mono">
 
         <Section title="Mode Tracking" defaultOpen hasError={modeError}>
           <Row label="Active mode" value={NAV_STATE_NAMES[status.navState] ?? `STATE_${status.navState}`} valueClass={modeOverridden ? 'text-red-400' : 'text-cyan-300'} />

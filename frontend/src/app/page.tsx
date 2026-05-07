@@ -35,29 +35,29 @@ function HomeContent() {
         </div>
       </header>
 
-      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-5 gap-3 p-3">
-        {/* Left: video on top, manual control reserved at bottom */}
-        <div className="col-span-1 lg:col-span-3 flex flex-col gap-3 min-h-0">
-          <div className="flex-1 min-h-0 bg-black rounded-xl overflow-hidden border border-neutral-800 shadow-2xl relative">
+      <div className="flex-1 min-h-0 flex flex-col gap-3 p-3 relative">
+        {/* Top Section: Video & Map (1/2 Height) */}
+        <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-5 gap-3">
+          <div className="col-span-1 lg:col-span-3 bg-black rounded-xl overflow-hidden border border-neutral-800 shadow-2xl relative">
             <VideoPlayerWebRTC />
             <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded text-xs text-green-400 font-mono border border-green-500/30">
               LIVE | WebRTC
             </div>
           </div>
-          <div className="shrink-0 rounded-xl overflow-hidden border border-neutral-800 shadow-lg">
-            <ManualControlPanel />
+          <div className="col-span-1 lg:col-span-2 rounded-xl overflow-hidden border border-neutral-800 shadow-lg relative">
+            <MissionMap />
           </div>
         </div>
 
-        {/* Right: map on top, tabbed telemetry/VLM below */}
-        <div className="col-span-1 lg:col-span-2 flex flex-col gap-3 min-h-0">
-          <div className="flex-[3] min-h-0 rounded-xl overflow-hidden border border-neutral-800 shadow-lg relative">
-            <MissionMap />
-          </div>
-          <div className="flex-[2] min-h-0">
+        {/* Bottom Section: Tabs (1/2 Height, Middle Part) */}
+        <div className="flex-1 min-h-0 flex justify-center">
+          <div className="w-[65vw] max-w-6xl min-w-[500px]">
             <RightTabs />
           </div>
         </div>
+
+        {/* Manual Control Overlay (Fixed positioning inside) */}
+        <ManualControlPanel />
       </div>
     </main>
   );
