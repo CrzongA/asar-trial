@@ -76,6 +76,8 @@ class TeleopBridge(Node):
         # to the Gazebo joint command topics for x500_gimbal_0.
         self.gz_pitch_pub = self.create_publisher(Float64, '/gimbal/pitch', 10)
         self.gz_yaw_pub = self.create_publisher(Float64, '/gimbal/yaw', 10)
+        self.gimbal_pub = self.create_publisher(
+            GimbalManagerSetManualControl, '/fmu/in/gimbal_manager_set_manual_control', PX4_QOS)
 
         self.last_msg: ManualControlSetpoint | None = None
         self.last_msg_ns: int = 0
@@ -91,7 +93,7 @@ class TeleopBridge(Node):
 
         self.get_logger().info(
             f'teleop bridge ready @ {PUBLISH_HZ:.0f} Hz. '
-            'Flight: /teleop/manual_input | Gimbal: /teleop/gimbal_input -> /gimbal/{pitch,yaw}')
+            'Flight: /teleop/manual_input | Gimbal: /teleop/gimbal_input -> {PX4, /gimbal/{pitch,yaw}}')
 
     def _on_input(self, msg: ManualControlSetpoint) -> None:
         sanitized = deepcopy(msg)
@@ -119,9 +121,19 @@ class TeleopBridge(Node):
             out.timestamp_sample = out.timestamp
             self.pub.publish(out)
 
-        # 2. Handle gimbal: integrate joystick rates → absolute angles → publish
-        # directly to Gazebo joint command topics via the ros_gz_bridge in launch_sim.sh.
+        # 2. Handle gimbal
         if self.last_gimbal_msg is not None and (now_ns - self.last_gimbal_ns < INPUT_TIMEOUT_NS):
+            # 2a. Send to PX4 Gimbal Manager.
+            # This allows PX4 to track gimbal state and potentially manage
+            # multi-client contention or state-based overrides.
+            px4_gimbal = deepcopy(self.last_gimbal_msg)
+            px4_gimbal.timestamp = now_ns // 1000
+            self.gimbal_pub.publish(px4_gimbal)
+
+            # 2b. Integrate joystick rates → absolute angles → publish
+            # directly to Gazebo joint command topics via the ros_gz_bridge in launch_sim.sh.
+            # NOTE: We maintain this direct path because the simulated gimbal 
+            # often lacks the necessary internal PX4-to-Gazebo bridge for manager-driven control.
             pitch_rate = _clamp_unit(self.last_gimbal_msg.pitch_rate)
             yaw_rate = _clamp_unit(self.last_gimbal_msg.yaw_rate)
 
