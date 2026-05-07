@@ -20,6 +20,7 @@ Reorganized flow:
 """
 
 import math
+import subprocess
 from enum import Enum, auto
 
 import rclpy
@@ -97,6 +98,7 @@ class MissionNode(Node):
         self.create_subscription(PoseStamped, '/mission/goto', self._on_goto, 10)
         self.create_subscription(Empty, '/mission/land', lambda _: self._enter(State.LANDING), 10)
         self.create_subscription(Empty, '/mission/cancel', self._on_cancel, 10)
+        self.create_subscription(Empty, '/mission/reset', self._on_reset, 10)
 
         # Teleop monitor
         self.create_subscription(ManualControlSetpoint, '/teleop/manual_input', self._on_teleop, PX4_QOS)
@@ -164,6 +166,39 @@ class MissionNode(Node):
             self.get_logger().info('Manual input detected. Pausing mission.')
             self._enter(State.PAUSED)
 
+    def _on_reset(self, _msg: Empty) -> None:
+        self.get_logger().info('Reset command received. Teleporting to spawn and rebooting PX4...')
+        
+        # 1. Force disarm
+        self._send_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, p1=0.0)
+        
+        # 2. Teleport in Gazebo
+        # Pose: -5.26, 1.97, 3.65, 0, 0, 2.96 (yaw)
+        # Quat: x: 0, y: 0, z: 0.9959, w: 0.0906
+        gz_cmd = [
+            'gz', 'service', '-s', '/world/asar_world/set_pose',
+            '--reqtype', 'gz.msgs.Pose',
+            '--reptype', 'gz.msgs.Boolean',
+            '--timeout', '1000',
+            '--req', 'name: "x500_gimbal_0", position: {x: -5.26, y: 1.97, z: 3.65}, orientation: {x: 0, y: 0, z: 0.9959, w: 0.0906}'
+        ]
+        try:
+            # We use check=False because Gazebo might be busy or the service might time out
+            # but we still want to proceed with the PX4 reboot.
+            subprocess.run(gz_cmd, check=False, timeout=2.0)
+        except Exception as e:
+            self.get_logger().error(f'Failed to teleport in Gazebo: {e}')
+
+        # 3. Reboot PX4 (VEHICLE_CMD_PREFLIGHT_REBOOT_SHUTDOWN = 246)
+        # p1=1: reboot autopilot
+        self._send_command(246, p1=1.0)
+        
+        # 4. Reset internal state
+        self.state = State.IDLE
+        self.mission_target_ned = (0.0, 0.0, -TAKEOFF_ALT_M)
+        self.reposition_sent = False
+        self.command_retry_count = 0
+
     # ---- State Machine ----------------------------------------------------
     def _enter(self, new_state: State) -> None:
         if new_state != self.state:
@@ -175,7 +210,9 @@ class MissionNode(Node):
             if new_state == State.TAKEOFF:
                 self.get_logger().info(f'Arming and initiating Auto Takeoff to {TAKEOFF_ALT_M}m...')
                 self._send_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, p1=1.0)
-                self._send_command(VehicleCommand.VEHICLE_CMD_NAV_TAKEOFF, p7=TAKEOFF_ALT_M)
+                # Use NaN for p5/p6 to signal "Takeoff at current location"
+                self._send_command(VehicleCommand.VEHICLE_CMD_NAV_TAKEOFF, 
+                                 p5=float('nan'), p6=float('nan'), p7=TAKEOFF_ALT_M)
             
             elif new_state == State.MISSION:
                 self._send_mode(PX4_MAIN_MODE_AUTO, PX4_SUB_MODE_AUTO_LOITER)
@@ -197,18 +234,22 @@ class MissionNode(Node):
             return
 
         if self.state == State.TAKEOFF:
-            # Monitor takeoff progress: wait for Loiter mode AND not landed
             is_landed = self.last_land_detected.landed if self.last_land_detected else True
-            if nav_state == NAV_STATE_AUTO_LOITER and not is_landed:
-                self.get_logger().info('Takeoff complete (In-air & Loiter active). Transitioning to MISSION.')
-                self._enter(State.MISSION)
-            elif nav_state != NAV_STATE_AUTO_TAKEOFF and nav_state != NAV_STATE_AUTO_LOITER:
-                # Mode Guardian: PX4 might have dropped out of takeoff/loiter
-                if self.command_retry_count % 20 == 0:
-                    self.get_logger().warning(f'Unexpected nav_state {nav_state} during takeoff. Resending arm & takeoff...')
-                    self._send_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, p1=1.0)
-                    self._send_command(VehicleCommand.VEHICLE_CMD_NAV_TAKEOFF, p7=TAKEOFF_ALT_M)
-                self.command_retry_count += 1
+            
+            if not is_landed:
+                # We are in the air. Wait for Loiter (takeoff completion) to transition.
+                if nav_state == NAV_STATE_AUTO_LOITER:
+                    self.get_logger().info('Takeoff complete (In-air & Loiter active). Transitioning to MISSION.')
+                    self._enter(State.MISSION)
+            else:
+                # Still on the ground. We must ensure we are in AUTO_TAKEOFF mode.
+                if nav_state != NAV_STATE_AUTO_TAKEOFF:
+                    if self.command_retry_count % 10 == 0:
+                        self.get_logger().warning(f'Still landed and not in TAKEOFF (nav_state: {nav_state}). Resending Arm & Takeoff...')
+                        self._send_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, p1=1.0)
+                        self._send_command(VehicleCommand.VEHICLE_CMD_NAV_TAKEOFF, 
+                                         p5=float('nan'), p6=float('nan'), p7=TAKEOFF_ALT_M)
+                    self.command_retry_count += 1
 
         elif self.state == State.MISSION:
             # Handle navigation in Auto Loiter
