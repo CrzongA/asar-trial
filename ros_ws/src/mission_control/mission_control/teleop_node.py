@@ -6,12 +6,20 @@ republishes to PX4 at a fixed 50 Hz so PX4's RC-loss failsafe doesn't fire.
 
 The autonomous mission_node watches /teleop/manual_input directly to know when
 to yield offboard control to teleop -- this bridge only handles transport.
+
+Gimbal: frontend publishes GimbalManagerSetManualControl on /teleop/gimbal_input.
+This node integrates the joystick rates into absolute angles and publishes
+px4_msgs/VehicleCommand (VEHICLE_CMD_DO_GIMBAL_MANAGER_PITCHYAW) to
+/fmu/in/vehicle_command. PX4's gimbal manager then drives the simulated
+gimbal joints in Gazebo.
 """
 
 from copy import deepcopy
+import math
 
 import rclpy
 from px4_msgs.msg import ManualControlSetpoint, GimbalManagerSetManualControl
+from std_msgs.msg import Float64
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy,
@@ -35,6 +43,14 @@ INPUT_TIMEOUT_NS = 500_000_000  # stop republishing after 0.5 s of silence
 # data_source==SOURCE_RC, so we must claim MAVLink_0 or PX4 silently drops it.
 DATA_SOURCE_MAVLINK_0 = ManualControlSetpoint.SOURCE_MAVLINK_0
 
+# Gimbal: degrees per second at full stick deflection (matches MNT_RATE_PITCH/YAW default of 30)
+GIMBAL_RATE_DEG_S = 30.0
+# Pitch limits matching MNT_MIN_PITCH=-135, MNT_MAX_PITCH=45 from airframe config
+GIMBAL_PITCH_MIN_DEG = -135.0
+GIMBAL_PITCH_MAX_DEG = 45.0
+# Yaw: MNT_RANGE_YAW=720, symmetric about 0
+GIMBAL_YAW_RANGE_DEG = 360.0
+
 
 def _clamp_unit(v: float) -> float:
     if v != v:  # NaN
@@ -55,18 +71,27 @@ class TeleopBridge(Node):
         # PX4 listens on the unversioned topics on this build.
         self.pub = self.create_publisher(
             ManualControlSetpoint, '/fmu/in/manual_control_input', PX4_QOS)
-        self.gimbal_pub = self.create_publisher(
-            GimbalManagerSetManualControl, '/fmu/in/gimbal_manager_set_manual_control', PX4_QOS)
+        # Gimbal joints are controlled directly via ros_gz_bridge (see launch_sim.sh).
+        # launch_sim.sh bridges /gimbal/pitch and /gimbal/yaw (std_msgs/Float64, radians)
+        # to the Gazebo joint command topics for x500_gimbal_0.
+        self.gz_pitch_pub = self.create_publisher(Float64, '/gimbal/pitch', 10)
+        self.gz_yaw_pub = self.create_publisher(Float64, '/gimbal/yaw', 10)
 
         self.last_msg: ManualControlSetpoint | None = None
         self.last_msg_ns: int = 0
         self.last_gimbal_msg: GimbalManagerSetManualControl | None = None
         self.last_gimbal_ns: int = 0
+
+        # Accumulated gimbal position in degrees (rate-integrated from joystick).
+        self._gimbal_pitch_deg: float = 0.0
+        self._gimbal_yaw_deg: float = 0.0
+        self._gimbal_configured: bool = False
+
         self.create_timer(1.0 / PUBLISH_HZ, self._tick)
 
         self.get_logger().info(
             f'teleop bridge ready @ {PUBLISH_HZ:.0f} Hz. '
-            'Publish px4_msgs/ManualControlSetpoint on /teleop/manual_input.')
+            'Flight: /teleop/manual_input | Gimbal: /teleop/gimbal_input -> /gimbal/{pitch,yaw}')
 
     def _on_input(self, msg: ManualControlSetpoint) -> None:
         sanitized = deepcopy(msg)
@@ -85,33 +110,36 @@ class TeleopBridge(Node):
 
     def _tick(self) -> None:
         now_ns = self.get_clock().now().nanoseconds
-        
+        dt = 1.0 / PUBLISH_HZ
+
         # 1. Handle flight controls
         if self.last_msg is not None and (now_ns - self.last_msg_ns < INPUT_TIMEOUT_NS):
             out = self.last_msg
             out.timestamp = now_ns // 1000
             out.timestamp_sample = out.timestamp
             self.pub.publish(out)
-        # 2. Handle gimbal controls.
-        # PX4's gimbal manager starts with sysid_primary_control=0 ("no one in control").
-        # The check is origin_sysid == sysid_primary_control, so sending with origin_sysid=0
-        # matches the default and is accepted without needing a CONFIGURE command.
-        # MNT_MODE_OUT=1 (AUX) routes through OutputRC which publishes gimbal_controls,
-        # the topic GZGimbal::pollSetpoint() reads to drive Gazebo joint commands.
+
+        # 2. Handle gimbal: integrate joystick rates → absolute angles → publish
+        # directly to Gazebo joint command topics via the ros_gz_bridge in launch_sim.sh.
         if self.last_gimbal_msg is not None and (now_ns - self.last_gimbal_ns < INPUT_TIMEOUT_NS):
-            g = deepcopy(self.last_gimbal_msg)
-            g.timestamp = now_ns // 1000
-            g.pitch = float('nan')  # NaN: use rate control, not position
-            g.yaw = float('nan')
-            g.pitch_rate = _clamp_unit(g.pitch_rate)
-            g.yaw_rate = _clamp_unit(g.yaw_rate)
-            g.origin_sysid = 0   # matches default sysid_primary_control=0
-            g.origin_compid = 0  # matches default compid_primary_control=0
-            g.target_system = 1
-            g.target_component = 1
-            g.gimbal_device_id = 0
-            g.flags = 0
-            self.gimbal_pub.publish(g)
+            pitch_rate = _clamp_unit(self.last_gimbal_msg.pitch_rate)
+            yaw_rate = _clamp_unit(self.last_gimbal_msg.yaw_rate)
+
+            self._gimbal_pitch_deg += pitch_rate * GIMBAL_RATE_DEG_S * dt
+            self._gimbal_yaw_deg += yaw_rate * GIMBAL_RATE_DEG_S * dt
+
+            self._gimbal_pitch_deg = max(GIMBAL_PITCH_MIN_DEG,
+                                         min(GIMBAL_PITCH_MAX_DEG, self._gimbal_pitch_deg))
+            self._gimbal_yaw_deg = max(-GIMBAL_YAW_RANGE_DEG / 2,
+                                       min(GIMBAL_YAW_RANGE_DEG / 2, self._gimbal_yaw_deg))
+
+            pitch_msg = Float64()
+            pitch_msg.data = math.radians(self._gimbal_pitch_deg)
+            self.gz_pitch_pub.publish(pitch_msg)
+
+            yaw_msg = Float64()
+            yaw_msg.data = math.radians(self._gimbal_yaw_deg)
+            self.gz_yaw_pub.publish(yaw_msg)
 
 
 def main(args=None):

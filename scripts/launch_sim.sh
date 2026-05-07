@@ -185,7 +185,6 @@ echo "[3/4] Starting PX4 SITL (x500_gimbal in asar_world)..."
     PX4_PARAM_MPC_JERK_AUTO=1.5 \
     PX4_PARAM_MPC_POS_MODE=4 \
     PX4_PARAM_MPC_XY_CRUISE=5.0 \
-    PX4_PARAM_MNT_MODE_OUT=1 \
     make px4_sitl gz_x500_gimbal
 ) &
 PIDS+=($!)
@@ -194,12 +193,17 @@ sleep 8
 # --- 4. ros_gz bridges ----------------------------------------------------
 # Camera: the gimbal cam has no explicit <topic>, so Gazebo names it by entity path.
 # Clock: needed so ROS nodes use sim time from PX4/Gazebo.
-echo "[4/4] Starting ros_gz_bridge (camera + clock)..."
+echo "[4/4] Starting ros_gz_bridge (camera + clock + gimbal)..."
 CAM_GZ_TOPIC="/world/$WORLD/model/x500_gimbal_0/link/camera_link/sensor/camera/image"
 ros2 run ros_gz_bridge parameter_bridge \
     "${CAM_GZ_TOPIC}@sensor_msgs/msg/Image[gz.msgs.Image" \
     "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock" \
-    --ros-args --remap "${CAM_GZ_TOPIC}:=/camera/image_raw" &
+    "/model/x500_gimbal_0/command/gimbal_pitch@std_msgs/msg/Float64]gz.msgs.Double" \
+    "/model/x500_gimbal_0/command/gimbal_yaw@std_msgs/msg/Float64]gz.msgs.Double" \
+    --ros-args \
+    --remap "${CAM_GZ_TOPIC}:=/camera/image_raw" \
+    --remap "/model/x500_gimbal_0/command/gimbal_pitch:=/gimbal/pitch" \
+    --remap "/model/x500_gimbal_0/command/gimbal_yaw:=/gimbal/yaw" &
 PIDS+=($!)
 
 echo
