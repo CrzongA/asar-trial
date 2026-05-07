@@ -43,7 +43,7 @@ from rclpy.qos import (
     QoSProfile,
     ReliabilityPolicy,
 )
-from std_msgs.msg import Empty
+from std_msgs.msg import Empty, String
 
 
 PX4_QOS = QoSProfile(
@@ -99,6 +99,8 @@ class MissionNode(Node):
         self.create_subscription(Empty, '/mission/land', lambda _: self._enter(State.LANDING), 10)
         self.create_subscription(Empty, '/mission/cancel', self._on_cancel, 10)
         self.create_subscription(Empty, '/mission/reset', self._on_reset, 10)
+        self.create_subscription(Empty, '/mission/rtl', self._on_rtl, 10)
+        self.pub_status_text = self.create_publisher(String, '/mission/status_text', 10)
 
         # Teleop monitor
         self.create_subscription(ManualControlSetpoint, '/teleop/manual_input', self._on_teleop, PX4_QOS)
@@ -166,6 +168,11 @@ class MissionNode(Node):
             self.get_logger().info('Manual input detected. Pausing mission.')
             self._enter(State.PAUSED)
 
+    def _on_rtl(self, _msg: Empty) -> None:
+        self.get_logger().info('RTL command received. Initiating Return to Launch.')
+        self._send_command(VehicleCommand.VEHICLE_CMD_NAV_RETURN_TO_LAUNCH)
+        self._enter(State.IDLE) # Let PX4 take over RTL
+
     def _on_reset(self, _msg: Empty) -> None:
         self.get_logger().info('Reset command received. Teleporting to spawn and rebooting PX4...')
         
@@ -223,6 +230,18 @@ class MissionNode(Node):
             elif new_state == State.LANDING:
                 self.get_logger().info('Initiating Auto Land...')
                 self._send_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
+
+            # Publish status for UI
+            self._publish_status(new_state)
+
+    def _publish_status(self, state: State) -> None:
+        msg = String()
+        if state == State.IDLE: msg.data = "Mission Idle"
+        elif state == State.TAKEOFF: msg.data = "Taking Off..."
+        elif state == State.MISSION: msg.data = "Mission Running"
+        elif state == State.PAUSED: msg.data = "Mission Paused"
+        elif state == State.LANDING: msg.data = "Landing..."
+        self.pub_status_text.publish(msg)
 
     def _tick(self) -> None:
         if self.last_status is None:

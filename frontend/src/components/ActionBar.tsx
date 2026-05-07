@@ -11,6 +11,7 @@ export default function ActionBar() {
   const [armingState, setArmingState] = useState<number>(0);
   const [landed, setLanded] = useState(true);
   const [confirmLand, setConfirmLand] = useState(false);
+  const [confirmRtl, setConfirmRtl] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
 
   useEffect(() => {
@@ -75,6 +76,17 @@ export default function ActionBar() {
     setConfirmLand(false);
   };
 
+  const sendRtl = () => {
+    if (!ros) return;
+    const topic = new ROSLIB.Topic({
+      ros,
+      name: '/mission/rtl',
+      messageType: 'std_msgs/msg/Empty',
+    });
+    topic.publish({} as any);
+    setConfirmRtl(false);
+  };
+
   const sendReset = () => {
     if (!ros) return;
     const topic = new ROSLIB.Topic({
@@ -85,7 +97,6 @@ export default function ActionBar() {
     topic.publish({} as any);
     setConfirmReset(false);
   };
-
   return (
     <div className="flex items-center gap-2">
       <button
@@ -101,10 +112,17 @@ export default function ActionBar() {
       </button>
       <button
         onClick={() => setConfirmLand(true)}
-        disabled={!connected}
+        disabled={!connected || landed}
         className="px-4 py-2 rounded-lg font-mono text-sm font-semibold bg-red-600/20 border border-red-500 text-red-300 hover:bg-red-600/30 transition disabled:opacity-40 disabled:cursor-not-allowed"
       >
-        EMERGENCY LAND
+        LAND
+      </button>
+      <button
+        onClick={() => setConfirmRtl(true)}
+        disabled={!connected || landed}
+        className="px-4 py-2 rounded-lg font-mono text-sm font-semibold bg-amber-600/20 border border-amber-500 text-amber-300 hover:bg-amber-600/30 transition disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        RTL
       </button>
       <button
         onClick={() => setConfirmReset(true)}
@@ -117,9 +135,9 @@ export default function ActionBar() {
       {confirmLand && (
         <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/70 backdrop-blur-sm">
           <div className="bg-neutral-900 border border-red-500/50 rounded-xl p-6 max-w-sm shadow-2xl">
-            <h3 className="text-red-400 text-lg font-bold mb-2">Confirm Emergency Land</h3>
+            <h3 className="text-red-400 text-lg font-bold mb-2">Confirm Landing</h3>
             <p className="text-neutral-300 text-sm mb-5">
-              The drone will descend and disarm immediately. Continue?
+              The drone will descend and disarm at its current location. Continue?
             </p>
             <div className="flex justify-end gap-2">
               <button
@@ -133,6 +151,31 @@ export default function ActionBar() {
                 className="px-4 py-2 rounded-lg text-sm bg-red-600 text-white hover:bg-red-500"
               >
                 Land Now
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmRtl && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-neutral-900 border border-amber-500/50 rounded-xl p-6 max-w-sm shadow-2xl">
+            <h3 className="text-amber-400 text-lg font-bold mb-2">Confirm Return to Launch</h3>
+            <p className="text-neutral-300 text-sm mb-5">
+              The drone will fly back to its takeoff position and land automatically. Continue?
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmRtl(false)}
+                className="px-4 py-2 rounded-lg text-sm bg-neutral-800 border border-neutral-700 text-neutral-300 hover:bg-neutral-700"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={sendRtl}
+                className="px-4 py-2 rounded-lg text-sm bg-amber-600 text-white hover:bg-amber-500"
+              >
+                RTL Now
               </button>
             </div>
           </div>

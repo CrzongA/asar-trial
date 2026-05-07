@@ -9,6 +9,7 @@ import { WaypointProvider } from '@/components/WaypointProvider';
 import RightTabs from '@/components/RightTabs';
 import ActionBar from '@/components/ActionBar';
 import ManualControlPanel from '@/components/ManualControlPanel';
+import StatusMessageHub from '@/components/StatusMessageHub';
 
 const MissionMap = dynamic(() => import('@/components/MissionMap'), { ssr: false });
 
@@ -58,6 +59,9 @@ function HomeContent() {
 
         {/* Manual Control Overlay (Fixed positioning inside) */}
         <ManualControlPanel />
+
+        {/* Aircraft Status Overlay */}
+        <StatusMessageHub />
       </div>
     </main>
   );
