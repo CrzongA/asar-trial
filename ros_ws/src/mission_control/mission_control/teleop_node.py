@@ -11,7 +11,7 @@ to yield offboard control to teleop -- this bridge only handles transport.
 from copy import deepcopy
 
 import rclpy
-from px4_msgs.msg import ManualControlSetpoint
+from px4_msgs.msg import ManualControlSetpoint, GimbalManagerSetManualControl
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy,
@@ -49,12 +49,19 @@ class TeleopBridge(Node):
         self.create_subscription(
             ManualControlSetpoint, '/teleop/manual_input',
             self._on_input, PX4_QOS)
-        # PX4 listens on the unversioned /fmu/in/manual_control_input on this build.
+        self.create_subscription(
+            GimbalManagerSetManualControl, '/teleop/gimbal_input',
+            self._on_gimbal_input, PX4_QOS)
+        # PX4 listens on the unversioned topics on this build.
         self.pub = self.create_publisher(
             ManualControlSetpoint, '/fmu/in/manual_control_input', PX4_QOS)
+        self.gimbal_pub = self.create_publisher(
+            GimbalManagerSetManualControl, '/fmu/in/gimbal_manager_set_manual_control', PX4_QOS)
 
         self.last_msg: ManualControlSetpoint | None = None
         self.last_msg_ns: int = 0
+        self.last_gimbal_msg: GimbalManagerSetManualControl | None = None
+        self.last_gimbal_ns: int = 0
         self.create_timer(1.0 / PUBLISH_HZ, self._tick)
 
         self.get_logger().info(
@@ -72,17 +79,39 @@ class TeleopBridge(Node):
         self.last_msg = sanitized
         self.last_msg_ns = self.get_clock().now().nanoseconds
 
+    def _on_gimbal_input(self, msg: GimbalManagerSetManualControl) -> None:
+        self.last_gimbal_msg = msg
+        self.last_gimbal_ns = self.get_clock().now().nanoseconds
+
     def _tick(self) -> None:
-        if self.last_msg is None:
-            return
         now_ns = self.get_clock().now().nanoseconds
-        if now_ns - self.last_msg_ns > INPUT_TIMEOUT_NS:
-            return
-        # Stamp at every publish so PX4 sees fresh timestamps even on idle holds.
-        out = self.last_msg
-        out.timestamp = now_ns // 1000
-        out.timestamp_sample = out.timestamp
-        self.pub.publish(out)
+        
+        # 1. Handle flight controls
+        if self.last_msg is not None and (now_ns - self.last_msg_ns < INPUT_TIMEOUT_NS):
+            out = self.last_msg
+            out.timestamp = now_ns // 1000
+            out.timestamp_sample = out.timestamp
+            self.pub.publish(out)
+        # 2. Handle gimbal controls.
+        # PX4's gimbal manager starts with sysid_primary_control=0 ("no one in control").
+        # The check is origin_sysid == sysid_primary_control, so sending with origin_sysid=0
+        # matches the default and is accepted without needing a CONFIGURE command.
+        # MNT_MODE_OUT=1 (AUX) routes through OutputRC which publishes gimbal_controls,
+        # the topic GZGimbal::pollSetpoint() reads to drive Gazebo joint commands.
+        if self.last_gimbal_msg is not None and (now_ns - self.last_gimbal_ns < INPUT_TIMEOUT_NS):
+            g = deepcopy(self.last_gimbal_msg)
+            g.timestamp = now_ns // 1000
+            g.pitch = float('nan')  # NaN: use rate control, not position
+            g.yaw = float('nan')
+            g.pitch_rate = _clamp_unit(g.pitch_rate)
+            g.yaw_rate = _clamp_unit(g.yaw_rate)
+            g.origin_sysid = 0   # matches default sysid_primary_control=0
+            g.origin_compid = 0  # matches default compid_primary_control=0
+            g.target_system = 1
+            g.target_component = 1
+            g.gimbal_device_id = 0
+            g.flags = 0
+            self.gimbal_pub.publish(g)
 
 
 def main(args=None):
