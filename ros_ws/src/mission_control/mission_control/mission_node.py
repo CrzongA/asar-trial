@@ -1,19 +1,22 @@
-"""ASAR mission_node: offboard flight controller for PX4 SITL.
-
-State machine (IDLE -> ARM -> TAKEOFF -> HOLD -> GOTO -> LAND -> IDLE) drives
-the drone via PX4's offboard interface. Hands control over to teleop when
-/teleop/manual_input becomes active, and takes it back when teleop goes silent.
+"""ASAR mission_node: automated flight controller for PX4 SITL.
 
 Topics:
   in   /mission/goto (geometry_msgs/PoseStamped, ENU)   high-level waypoint
   in   /mission/land (std_msgs/Empty)                    trigger landing
   in   /teleop/manual_input (px4_msgs/ManualControlSetpoint)  teleop probe
   in   /fmu/out/vehicle_local_position                   telemetry
+  in   /fmu/out/vehicle_global_position                  global telemetry
   in   /fmu/out/vehicle_status                           arming/nav state
+  in   /fmu/out/home_position                            home reference
   in   /fmu/out/failsafe_flags                           RC-loss tracking
   out  /fmu/in/offboard_control_mode                     setpoint type flag
   out  /fmu/in/trajectory_setpoint                       NED setpoint
   out  /fmu/in/vehicle_command                           arm / mode / land
+Reorganized flow:
+- Uses AUTO_TAKEOFF, AUTO_LOITER (with REPOSITION), and AUTO_LAND.
+- No OFFBOARD mode setpoint streaming.
+- Manual input on /teleop/manual_input pauses the mission by switching to POSCTL.
+- Resumes mission when teleop goes silent.
 """
 
 import math
@@ -23,12 +26,14 @@ import rclpy
 from geometry_msgs.msg import PoseStamped
 from px4_msgs.msg import (
     FailsafeFlags,
+    HomePosition,
     ManualControlSetpoint,
-    OffboardControlMode,
-    TrajectorySetpoint,
     VehicleCommand,
+    VehicleCommandAck,
     VehicleLocalPosition,
+    VehicleGlobalPosition,
     VehicleStatus,
+    VehicleLandDetected,
 )
 from rclpy.node import Node
 from rclpy.qos import (
@@ -47,38 +52,29 @@ PX4_QOS = QoSProfile(
     depth=5,
 )
 
-# PX4 main-mode constants for VEHICLE_CMD_DO_SET_MODE param2.
-PX4_MAIN_MODE_MANUAL = 1.0
-PX4_MAIN_MODE_POSITION = 3.0
-PX4_MAIN_MODE_OFFBOARD = 6.0
-PX4_BASE_MODE_CUSTOM = 1.0  # MAV_MODE_FLAG_CUSTOM_MODE_ENABLED
+# PX4 Navigation States from vehicle_status.nav_state
+NAV_STATE_POSCTL = 2
+NAV_STATE_AUTO_LOITER = 4
+NAV_STATE_OFFBOARD = 14
+NAV_STATE_AUTO_TAKEOFF = 17
+NAV_STATE_AUTO_LAND = 18
 
-TELEOP_TIMEOUT_NS = 300_000_000  # 0.3 s of silence before reclaiming OFFBOARD
-# Must be < COM_RC_LOSS_T (0.5 s) so we reclaim OFFBOARD (exempt via
-# COM_RCL_EXCEPT=4) before PX4's RC-loss failsafe fires in POSITION mode.
-SETPOINT_HZ = 20.0
-TAKEOFF_ALT_M = 2.0  # ENU z
+# PX4 Command constants
+PX4_MAIN_MODE_POSCTL = 3.0
+PX4_MAIN_MODE_AUTO = 4.0
+PX4_SUB_MODE_AUTO_LOITER = 3.0
 
-# Minimum RC messages from teleop_node before requesting POSITION mode switch.
-# 30 msgs × 20 ms = 600 ms > COM_RC_LOSS_T (0.5 s) so PX4 has stable RC input
-# and manual_control_signal_lost is guaranteed clear before the mode transition.
-TELEOP_WARMUP_MSGS = 30   # ≈ 600 ms at 50 Hz
+TELEOP_TIMEOUT_NS = 300_000_000  # 0.3 s of silence before resuming
+TICK_HZ = 10.0
+TAKEOFF_ALT_M = 20.0  # Default takeoff altitude
 
 
 class State(Enum):
     IDLE = auto()
-    ARM = auto()
     TAKEOFF = auto()
-    HOLD = auto()
-    GOTO = auto()
-    LAND = auto()
-    TELEOP_WARMUP = auto()  # waiting for manual_control_signal_lost to clear
-    TELEOP = auto()
-
-
-def enu_to_ned(x_e, y_n, z_up):
-    """ROS ENU (east, north, up) -> PX4 NED (north, east, down)."""
-    return float(y_n), float(x_e), float(-z_up)
+    MISSION = auto()
+    PAUSED = auto()
+    LANDING = auto()
 
 
 class MissionNode(Node):
@@ -86,273 +82,220 @@ class MissionNode(Node):
         super().__init__('mission_control_node')
 
         # PX4 telemetry
-        self.create_subscription(
-            VehicleLocalPosition, '/fmu/out/vehicle_local_position_v1',
-            self._on_local_pos, PX4_QOS)
-        self.create_subscription(
-            VehicleStatus, '/fmu/out/vehicle_status_v4',
-            self._on_status, PX4_QOS)
-        self.create_subscription(
-            FailsafeFlags, '/fmu/out/failsafe_flags',
-            self._on_failsafe_flags, PX4_QOS)
+        self.create_subscription(VehicleLocalPosition, '/fmu/out/vehicle_local_position_v1', self._on_local_pos, PX4_QOS)
+        self.create_subscription(VehicleGlobalPosition, '/fmu/out/vehicle_global_position', self._on_global_pos, PX4_QOS)
+        self.create_subscription(VehicleStatus, '/fmu/out/vehicle_status_v4', self._on_status, PX4_QOS)
+        self.create_subscription(HomePosition, '/fmu/out/home_position_v1', self._on_home_pos, PX4_QOS)
+        self.create_subscription(VehicleLandDetected, '/fmu/out/vehicle_land_detected', self._on_land_detected, PX4_QOS)
+        self.create_subscription(FailsafeFlags, '/fmu/out/failsafe_flags', self._on_failsafe_flags, PX4_QOS)
+        self.create_subscription(VehicleCommandAck, '/fmu/out/vehicle_command_ack_v1', self._on_command_ack, PX4_QOS)
 
-        # PX4 commands. NOTE: /fmu/in/* topics are unversioned on this PX4 build
-        # (v1.17 alpha) — the agent only creates a _v<N> suffix when the firmware's
-        # message hash diverges from px4_msgs' default. Publishing to a _v1 topic
-        # PX4 isn't subscribed to silently no-ops (subscriber count = 0).
-        self.pub_offboard = self.create_publisher(
-            OffboardControlMode, '/fmu/in/offboard_control_mode', PX4_QOS)
-        self.pub_setpoint = self.create_publisher(
-            TrajectorySetpoint, '/fmu/in/trajectory_setpoint', PX4_QOS)
-        self.pub_command = self.create_publisher(
-            VehicleCommand, '/fmu/in/vehicle_command', PX4_QOS)
+        # PX4 commands
+        self.pub_command = self.create_publisher(VehicleCommand, '/fmu/in/vehicle_command', PX4_QOS)
 
         # High-level interface
-        self.create_subscription(
-            PoseStamped, '/mission/goto', self._on_goto, 10)
-        self.create_subscription(
-            Empty, '/mission/land', lambda _msg: self._enter(State.LAND), 10)
+        self.create_subscription(PoseStamped, '/mission/goto', self._on_goto, 10)
+        self.create_subscription(Empty, '/mission/land', lambda _: self._enter(State.LANDING), 10)
+        self.create_subscription(Empty, '/mission/cancel', self._on_cancel, 10)
 
-        # Teleop probe: any message arriving here starts the warmup sequence.
-        self.create_subscription(
-            ManualControlSetpoint, '/teleop/manual_input',
-            self._on_teleop, PX4_QOS)
+        # Teleop monitor
+        self.create_subscription(ManualControlSetpoint, '/teleop/manual_input', self._on_teleop, PX4_QOS)
 
+        # Node state
         self.state: State = State.IDLE
-        self.target_ned = (0.0, 0.0, -TAKEOFF_ALT_M)
-        self.last_local_pos: VehicleLocalPosition | None = None
-        self.last_status: VehicleStatus | None = None
-        self.last_failsafe_flags: FailsafeFlags | None = None
+        self.mission_target_ned = (0.0, 0.0, -TAKEOFF_ALT_M)
         self.last_teleop_ns: int = 0
-        self.setpoint_count: int = 0  # PX4 needs ≥10 setpoints before accepting OFFBOARD
-        self.teleop_warmup_count: int = 0  # messages received while warming up
+        
+        # Telemetry cache
+        self.last_local_pos: VehicleLocalPosition | None = None
+        self.last_global_pos: VehicleGlobalPosition | None = None
+        self.last_status: VehicleStatus | None = None
+        self.last_home_pos: HomePosition | None = None
+        self.last_land_detected: VehicleLandDetected | None = None
+        
+        # Internal control flags
+        self.reposition_sent: bool = False
+        self.command_retry_count: int = 0
 
-        self.timer = self.create_timer(1.0 / SETPOINT_HZ, self._tick)
-        self.get_logger().info(
-            'mission_node ready. Publish PoseStamped on /mission/goto to start a mission.')
+        self.timer = self.create_timer(1.0 / TICK_HZ, self._tick)
+        self.get_logger().info('Mission node initialized with Auto Loiter flow.')
 
-    # ---- subscriptions ----------------------------------------------------
-    def _on_local_pos(self, msg: VehicleLocalPosition) -> None:
-        if self.last_local_pos is None:
-            self.get_logger().info('First VehicleLocalPosition received.')
-        self.last_local_pos = msg
+    # ---- Callbacks --------------------------------------------------------
+    def _on_local_pos(self, msg: VehicleLocalPosition) -> None: self.last_local_pos = msg
+    def _on_global_pos(self, msg: VehicleGlobalPosition) -> None: self.last_global_pos = msg
+    def _on_status(self, msg: VehicleStatus) -> None: self.last_status = msg
+    def _on_home_pos(self, msg: HomePosition) -> None: self.last_home_pos = msg
+    def _on_land_detected(self, msg: VehicleLandDetected) -> None: self.last_land_detected = msg
+    def _on_failsafe_flags(self, msg: FailsafeFlags) -> None: pass
 
-    def _on_status(self, msg: VehicleStatus) -> None:
-        if self.last_status is None:
-            self.get_logger().info('First VehicleStatus received.')
-        self.last_status = msg
-
-    def _on_failsafe_flags(self, msg: FailsafeFlags) -> None:
-        self.last_failsafe_flags = msg
+    def _on_command_ack(self, msg: VehicleCommandAck) -> None:
+        if msg.result != VehicleCommandAck.VEHICLE_CMD_RESULT_ACCEPTED:
+            self.get_logger().warning(f'PX4 rejected command {msg.command} (result: {msg.result}) in state {self.state.name}', throttle_duration_sec=2.0)
 
     def _on_goto(self, msg: PoseStamped) -> None:
-        self.target_ned = enu_to_ned(
-            msg.pose.position.x, msg.pose.position.y, msg.pose.position.z)
-        self.get_logger().info(
-            f'goto NED={self.target_ned} (from ENU '
-            f'x={msg.pose.position.x:.2f} y={msg.pose.position.y:.2f} z={msg.pose.position.z:.2f})')
-        if self.state == State.IDLE:
-            self._enter(State.ARM)
-        else:
-            self._enter(State.GOTO)
+        target_ned = self._enu_to_ned(msg.pose.position.x, msg.pose.position.y, msg.pose.position.z)
+        self.mission_target_ned = target_ned
+        self.reposition_sent = False
+        
+        self.get_logger().info(f'New mission target: {target_ned}')
+        
+        if self.state == State.IDLE or self.state == State.PAUSED:
+            is_landed = self.last_land_detected.landed if self.last_land_detected else True
+            if is_landed:
+                self._enter(State.TAKEOFF)
+            else:
+                self.get_logger().info('Aircraft already flying, jumping to MISSION.')
+                self._enter(State.MISSION)
+        elif self.state == State.TAKEOFF:
+            self.get_logger().info('Target updated during takeoff.')
+        elif self.state == State.MISSION:
+            self.get_logger().info('Retargeting active mission.')
+
+    def _on_cancel(self, _msg: Empty | None) -> None:
+        if self.state in (State.TAKEOFF, State.MISSION):
+            self.get_logger().info('Mission cancelled. Holding current position.')
+            self._enter(State.MISSION) # This will trigger a REPOSITION to current loc
+            if self.last_local_pos:
+                self.mission_target_ned = (self.last_local_pos.x, self.last_local_pos.y, self.last_local_pos.z)
 
     def _on_teleop(self, _msg: ManualControlSetpoint) -> None:
         self.last_teleop_ns = self.get_clock().now().nanoseconds
+        if self.state in (State.TAKEOFF, State.MISSION):
+            self.get_logger().info('Manual input detected. Pausing mission.')
+            self._enter(State.PAUSED)
 
-        if self.state == State.TELEOP:
-            return  # already in teleop, nothing to do
-
-        if self.state == State.TELEOP_WARMUP:
-            self.teleop_warmup_count += 1
-
-            if self.teleop_warmup_count >= TELEOP_WARMUP_MSGS:
-                self.get_logger().info(
-                    f'teleop warmup done (msgs={self.teleop_warmup_count}) '
-                    '-> switching PX4 to POSITION')
-                self._send_mode(PX4_MAIN_MODE_POSITION)
-                self._enter(State.TELEOP)
-            return
-
-        # Not yet in warmup — start it (only from active flight states).
-        if self.state in (State.TAKEOFF, State.HOLD, State.GOTO):
-            self.get_logger().info(
-                'teleop input detected -> entering warmup '
-                f'(need {TELEOP_WARMUP_MSGS} msgs or RC-loss to clear)')
-            self.teleop_warmup_count = 1
-            self._enter(State.TELEOP_WARMUP)
-
-    # ---- state machine ----------------------------------------------------
+    # ---- State Machine ----------------------------------------------------
     def _enter(self, new_state: State) -> None:
         if new_state != self.state:
-            self.get_logger().info(f'state: {self.state.name} -> {new_state.name}')
+            self.get_logger().info(f'Transition: {self.state.name} -> {new_state.name}')
             self.state = new_state
-            self.setpoint_count = 0
-            if new_state not in (State.TELEOP_WARMUP, State.TELEOP):
-                self.teleop_warmup_count = 0
+            self.reposition_sent = False
+            self.command_retry_count = 0
 
-            # Trigger landing once upon entry
-            if new_state == State.LAND:
-                self.get_logger().info('Sending NAV_LAND command...')
+            if new_state == State.TAKEOFF:
+                self.get_logger().info(f'Arming and initiating Auto Takeoff to {TAKEOFF_ALT_M}m...')
+                self._send_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, p1=1.0)
+                self._send_command(VehicleCommand.VEHICLE_CMD_NAV_TAKEOFF, p7=TAKEOFF_ALT_M)
+            
+            elif new_state == State.MISSION:
+                self._send_mode(PX4_MAIN_MODE_AUTO, PX4_SUB_MODE_AUTO_LOITER)
+            
+            elif new_state == State.PAUSED:
+                self._send_mode(PX4_MAIN_MODE_POSCTL)
+            
+            elif new_state == State.LANDING:
+                self.get_logger().info('Initiating Auto Land...')
                 self._send_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
 
     def _tick(self) -> None:
-        # Stream offboard heartbeat for every active state (not just OFFBOARD-controlled ones).
-        # This prevents "offboard signal lost" failsafe during the OFFBOARD→POSITION mode
-        # transition window when handing over to TELEOP: the SET_MODE command takes ~100-200 ms
-        # to be processed by PX4, and without the heartbeat it failsafes during that gap.
-        # The heartbeat is harmless while PX4 is in POSITION/MANUAL mode.
-        if self.state != State.IDLE:
-            self._publish_offboard_mode()
+        if self.last_status is None:
+            return
 
-        if self.state in (State.ARM, State.TAKEOFF, State.HOLD, State.GOTO):
-            self._publish_setpoint(self.target_ned)
-            self.setpoint_count += 1
+        nav_state = self.last_status.nav_state
+        
+        if self.state == State.IDLE:
+            return
 
-        elif self.state == State.TELEOP_WARMUP:
-            # Hold position while warming up so the drone doesn't drift.
-            self._publish_setpoint(self.target_ned)
-            self.setpoint_count += 1
-            # Guard: if teleop goes silent during warmup, fall back to HOLD.
-            now_ns = self.get_clock().now().nanoseconds
-            if self.last_teleop_ns > 0 and now_ns - self.last_teleop_ns > TELEOP_TIMEOUT_NS:
-                self.get_logger().info('teleop went silent during warmup -> back to HOLD')
-                self._enter(State.HOLD)
+        if self.state == State.TAKEOFF:
+            # Monitor takeoff progress: wait for Loiter mode AND not landed
+            is_landed = self.last_land_detected.landed if self.last_land_detected else True
+            if nav_state == NAV_STATE_AUTO_LOITER and not is_landed:
+                self.get_logger().info('Takeoff complete (In-air & Loiter active). Transitioning to MISSION.')
+                self._enter(State.MISSION)
+            elif nav_state != NAV_STATE_AUTO_TAKEOFF and nav_state != NAV_STATE_AUTO_LOITER:
+                # Mode Guardian: PX4 might have dropped out of takeoff/loiter
+                if self.command_retry_count % 20 == 0:
+                    self.get_logger().warning(f'Unexpected nav_state {nav_state} during takeoff. Resending arm & takeoff...')
+                    self._send_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, p1=1.0)
+                    self._send_command(VehicleCommand.VEHICLE_CMD_NAV_TAKEOFF, p7=TAKEOFF_ALT_M)
+                self.command_retry_count += 1
 
-        elif self.state == State.TELEOP:
-            # Keep a hold setpoint active so that if PX4 mode reverts to OFFBOARD
-            # the drone holds its last commanded position rather than executing a stale one.
-            self._publish_setpoint(self.target_ned)
-            now_ns = self.get_clock().now().nanoseconds
-            if now_ns - self.last_teleop_ns > TELEOP_TIMEOUT_NS:
-                self.get_logger().info('teleop idle -> reclaiming OFFBOARD')
-                self._send_mode(PX4_MAIN_MODE_OFFBOARD)
-                # Snap target to current pose so we don't lurch on resume.
-                if self.last_local_pos is not None:
-                    self.target_ned = (
-                        self.last_local_pos.x, self.last_local_pos.y, self.last_local_pos.z)
-                self._enter(State.HOLD)
-
-        if self.state == State.ARM:
-            # Stream setpoints first so PX4 will accept OFFBOARD
-            if self.setpoint_count < 10:
-                return
-
-            # Check if we are already in the target state
-            is_armed = self.last_status and self.last_status.arming_state == VehicleStatus.ARMING_STATE_ARMED
-            is_offboard = self.last_status and self.last_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD
-
-            if is_armed and is_offboard:
-                self._enter(State.TAKEOFF)
+        elif self.state == State.MISSION:
+            # Handle navigation in Auto Loiter
+            if nav_state != NAV_STATE_AUTO_LOITER:
+                if self.command_retry_count % 10 == 0:
+                    self._send_mode(PX4_MAIN_MODE_AUTO, PX4_SUB_MODE_AUTO_LOITER)
+                self.command_retry_count += 1
             else:
-                # Retry every 10 ticks (0.5s)
-                if self.setpoint_count % 10 == 0:
-                    if not is_offboard:
-                        self.get_logger().info('Requesting OFFBOARD mode...')
-                        self._send_mode(PX4_MAIN_MODE_OFFBOARD)
-                    if not is_armed:
-                        if self.last_status and not self.last_status.pre_flight_checks_pass:
-                            self.get_logger().warning('Pre-flight checks failing! PX4 may refuse to arm.', throttle_duration_sec=2.0)
-                        self.get_logger().info('Requesting ARM...')
-                        self._send_arm(True)
+                # Resend reposition ONLY if not yet sent in this state
+                if not self.reposition_sent:
+                    self._do_reposition()
+                self.command_retry_count += 1
 
-        elif self.state in (State.TAKEOFF, State.HOLD, State.GOTO):
-            # Mode guardian: if we lose OFFBOARD or ARMED, revert to ARM state to reclaim.
-            if self.setpoint_count % 20 == 0:
-                if self.last_status and (self.last_status.arming_state != VehicleStatus.ARMING_STATE_ARMED or
-                                       self.last_status.nav_state != VehicleStatus.NAVIGATION_STATE_OFFBOARD):
-                    self.get_logger().warning(f'Lost OFFBOARD or ARMED state during {self.state.name}! Reverting to ARM.')
-                    self._enter(State.ARM)
-                    return
-
-            if self.state == State.TAKEOFF:
-                if self._reached(self.target_ned, tol=0.4):
-                    self._enter(State.HOLD)
-            elif self.state == State.GOTO:
-                if self._reached(self.target_ned, tol=0.4):
-                    self._enter(State.HOLD)
-            elif self.state == State.HOLD:
-                pass
-
-        elif self.state == State.LAND:
-            # Command was sent once in _enter(). Wait for PX4 to disarm after landing.
-            if self.last_status and self.last_status.arming_state == VehicleStatus.ARMING_STATE_DISARMED:
-                self.get_logger().info('Drone disarmed -> landing complete.')
+            # Check if reached
+            if self._reached(self.mission_target_ned):
+                self.get_logger().info('Mission target reached. Returning to IDLE.')
                 self._enter(State.IDLE)
 
-    # ---- helpers ----------------------------------------------------------
-    def _reached(self, target_ned, tol=1.5) -> bool:
-        p = self.last_local_pos
-        if p is None:
-            return False
-        dx, dy, dz = p.x - target_ned[0], p.y - target_ned[1], p.z - target_ned[2]
-        return (dx * dx + dy * dy + dz * dz) ** 0.5 < tol
+        elif self.state == State.PAUSED:
+            # Monitor teleop timeout
+            now_ns = self.get_clock().now().nanoseconds
+            if now_ns - self.last_teleop_ns > TELEOP_TIMEOUT_NS:
+                self.get_logger().info('Teleop silent. Resuming mission.')
+                self._enter(State.MISSION)
 
-    def _now_us(self) -> int:
-        return self.get_clock().now().nanoseconds // 1000
+        elif self.state == State.LANDING:
+            if self.last_status.arming_state == VehicleStatus.ARMING_STATE_DISARMED:
+                self.get_logger().info('Landed and disarmed.')
+                self._enter(State.IDLE)
 
-    def _publish_offboard_mode(self) -> None:
-        msg = OffboardControlMode()
-        msg.timestamp = self._now_us()
-        msg.position = True
-        msg.velocity = False
-        msg.acceleration = False
-        msg.attitude = False
-        msg.body_rate = False
-        self.pub_offboard.publish(msg)
+    # ---- Helpers ----------------------------------------------------------
+    def _do_reposition(self) -> None:
+        lat, lon, alt = self._local_to_global(self.mission_target_ned)
+        if lat is not None:
+            self.get_logger().info(f'Sending REPOSITION to {lat:.6f}, {lon:.6f}, {alt:.2f}m')
+            self._send_command(VehicleCommand.VEHICLE_CMD_DO_REPOSITION, 
+                             p1=-1.0, p2=0.0, p4=float('nan'), 
+                             p5=lat, p6=lon, p7=alt)
+            self.reposition_sent = True
 
-    def _publish_setpoint(self, ned) -> None:
-        msg = TrajectorySetpoint()
-        msg.timestamp = self._now_us()
-        msg.position = [ned[0], ned[1], ned[2]]
+    def _local_to_global(self, target_ned):
+        R = 6378137.0
+        if self.last_home_pos:
+            h_lat, h_lon, h_alt = self.last_home_pos.lat, self.last_home_pos.lon, self.last_home_pos.alt
+        elif self.last_global_pos and self.last_local_pos:
+            h_lat = self.last_global_pos.lat - math.degrees(self.last_local_pos.x / R)
+            h_lon = self.last_global_pos.lon - math.degrees(self.last_local_pos.y / (R * math.cos(math.radians(self.last_global_pos.lat))))
+            h_alt = self.last_global_pos.alt + self.last_local_pos.z
+        else: return None, None, None
+            
+        t_lat = h_lat + math.degrees(target_ned[0] / R)
+        t_lon = h_lon + math.degrees(target_ned[1] / (R * math.cos(math.radians(h_lat))))
+        t_alt = h_alt - target_ned[2]
+        return t_lat, t_lon, t_alt
 
-        # Calculate yaw to face the target waypoint (NED: x=North, y=East)
-        if self.last_local_pos is not None:
-            dx = ned[0] - self.last_local_pos.x
-            dy = ned[1] - self.last_local_pos.y
-            # Only update yaw if we are far enough away to have a stable heading
-            if (dx * dx + dy * dy) > 0.5:
-                msg.yaw = math.atan2(dy, dx)
-            else:
-                # Maintain current yaw when very close to target
-                msg.yaw = self.last_local_pos.heading
-        else:
-            msg.yaw = 0.0
+    def _reached(self, target_ned, tol=2.0) -> bool:
+        if self.last_local_pos is None: return False
+        dx = self.last_local_pos.x - target_ned[0]
+        dy = self.last_local_pos.y - target_ned[1]
+        dz = self.last_local_pos.z - target_ned[2]
+        return (dx*dx + dy*dy + dz*dz)**0.5 < tol
 
-        self.pub_setpoint.publish(msg)
+    def _enu_to_ned(self, x, y, z): return float(y), float(x), float(-z)
 
-    def _send_command(self, command: int, p1: float = 0.0, p2: float = 0.0) -> None:
+    def _send_command(self, command: int, **kwargs) -> None:
         msg = VehicleCommand()
-        msg.timestamp = self._now_us()
+        msg.timestamp = self.get_clock().now().nanoseconds // 1000
         msg.command = command
-        msg.param1 = p1
-        msg.param2 = p2
-        msg.target_system = 1
-        msg.target_component = 1
-        msg.source_system = 1
-        msg.source_component = 1
+        for i in range(1, 8): setattr(msg, f'param{i}', kwargs.get(f'p{i}', 0.0))
+        msg.target_system, msg.target_component = 1, 1
+        msg.source_system, msg.source_component = 1, 1
         msg.from_external = True
         self.pub_command.publish(msg)
 
-    def _send_arm(self, arm: bool) -> None:
-        self._send_command(
-            VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0 if arm else 0.0)
-
-    def _send_mode(self, main_mode: float) -> None:
-        self._send_command(
-            VehicleCommand.VEHICLE_CMD_DO_SET_MODE, PX4_BASE_MODE_CUSTOM, main_mode)
+    def _send_mode(self, main_mode: float, sub_mode: float = 0.0) -> None:
+        # MAV_MODE_FLAG_CUSTOM_MODE_ENABLED = 1
+        self._send_command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, p1=1.0, p2=main_mode, p3=sub_mode)
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = MissionNode()
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
+    try: rclpy.spin(node)
+    except KeyboardInterrupt: pass
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()
