@@ -16,6 +16,7 @@ Topics:
   out  /fmu/in/vehicle_command                           arm / mode / land
 """
 
+import math
 from enum import Enum, auto
 
 import rclpy
@@ -279,7 +280,7 @@ class MissionNode(Node):
                 self._enter(State.IDLE)
 
     # ---- helpers ----------------------------------------------------------
-    def _reached(self, target_ned, tol=0.4) -> bool:
+    def _reached(self, target_ned, tol=1.5) -> bool:
         p = self.last_local_pos
         if p is None:
             return False
@@ -303,7 +304,20 @@ class MissionNode(Node):
         msg = TrajectorySetpoint()
         msg.timestamp = self._now_us()
         msg.position = [ned[0], ned[1], ned[2]]
-        msg.yaw = 0.0
+
+        # Calculate yaw to face the target waypoint (NED: x=North, y=East)
+        if self.last_local_pos is not None:
+            dx = ned[0] - self.last_local_pos.x
+            dy = ned[1] - self.last_local_pos.y
+            # Only update yaw if we are far enough away to have a stable heading
+            if (dx * dx + dy * dy) > 0.5:
+                msg.yaw = math.atan2(dy, dx)
+            else:
+                # Maintain current yaw when very close to target
+                msg.yaw = self.last_local_pos.heading
+        else:
+            msg.yaw = 0.0
+
         self.pub_setpoint.publish(msg)
 
     def _send_command(self, command: int, p1: float = 0.0, p2: float = 0.0) -> None:
