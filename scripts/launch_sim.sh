@@ -65,11 +65,41 @@ export GZ_SIM_RESOURCE_PATH=$(echo "$GZ_SIM_RESOURCE_PATH" | sed 's/::/:/g')
 # --- Process management ----------------------------------------------------
 PIDS=()
 cleanup() {
-    echo "Shutting down..."
+    # Disable traps to prevent recursion and ensure we don't get interrupted during cleanup
+    trap - EXIT INT TERM
+    echo ""
+    echo "Shutting down ASAR simulation..."
+
+    # 1. Send SIGINT (Ctrl+C) to all tracked background processes.
+    # This allows Gazebo and PX4 to perform their own graceful cleanup.
     for pid in "${PIDS[@]}"; do
-        kill "$pid" 2>/dev/null || true
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -INT "$pid" 2>/dev/null || true
+        fi
     done
-    wait 2>/dev/null || true
+
+    # 2. Wait a few seconds for graceful exit
+    sleep 3
+
+    # 3. Forcefully terminate any remaining processes in the PIDS array
+    # and any sub-processes they might have spawned (like PX4 under 'make').
+    for pid in "${PIDS[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            pkill -TERM -P "$pid" 2>/dev/null || true
+            kill -TERM "$pid" 2>/dev/null || true
+        fi
+    done
+
+    # 4. Final safety net: kill anything left in the script's process tree
+    pkill -KILL -P $$ 2>/dev/null || true
+    
+    # Broad cleanup for known stubborn components
+    pkill -9 "px4" 2>/dev/null || true
+    pkill -9 "gz" 2>/dev/null || true
+    pkill -9 "MicroXRCEAgent" 2>/dev/null || true
+
+    echo "Cleanup complete."
+    exit 0
 }
 trap cleanup EXIT INT TERM
 
@@ -102,6 +132,11 @@ fi
 export WORLD="asar_world"
 
 echo "[2/4] Launching Gazebo with $WORLD_PATH ..."
+# We explicitly export GZ_SIM_SERVER_CONFIG_PATH here to ensure Gazebo loads
+# PX4's server.config (sourced from gz_env.sh above). This is the 'source of truth'
+# for Gazebo systems (IMU, Magnetometer, etc.) in standalone mode.
+export GZ_SIM_SERVER_CONFIG_PATH="${GZ_SIM_SERVER_CONFIG_PATH}"
+
 # We use --headless-rendering (EGL) for hardware acceleration on the GPU.
 # We remove xvfb-run to prevent Gazebo from falling back to software GLX.
 env DRI_PRIME=1 \
@@ -128,18 +163,29 @@ sleep 6
 #   CBRK_SUPPLY_CHK=894281 — bypass the avionics power-monitor check (no power
 #                          module in SITL); blocks arming with "Preflight Fail:
 #                          system power unavailable".
+#   MNT_MODE_OUT=1         — use RC/AUX output (OutputRC) for the gimbal manager.
+#                          OutputRC publishes gimbal_controls uORB, which GZGimbal
+#                          reads to drive Gazebo joint topics. The default MAVLINK_V1
+#                          (2) output only drives gimbal_v1_command (consumed by the
+#                          MAVLink module for physical gimbals), which GZGimbal never
+#                          reads, so the simulated gimbal joints never move.
 echo "[3/4] Starting PX4 SITL (x500_gimbal in asar_world)..."
 (
     cd "$PX4_DIR" && \
     PX4_GZ_STANDALONE=1 \
     PX4_GZ_WORLD="$WORLD" \
+    PX4_GZ_MODEL_POSE="-5.26,1.97,3.65,0,0,2.96" \
     PX4_PARAM_COM_RC_IN_MODE=1 \
     PX4_PARAM_COM_RCL_EXCEPT=4 \
     PX4_PARAM_NAV_DLL_ACT=0 \
     PX4_PARAM_CBRK_SUPPLY_CHK=894281 \
     PX4_PARAM_MPC_LAND_SPEED=0.7 \
-    PX4_PARAM_LND_MC_THR_RANGE=0.15 \
     PX4_PARAM_COM_DISARM_LAND=1.0 \
+    PX4_PARAM_MPC_ACC_HOR=1 \
+    PX4_PARAM_MPC_JERK_AUTO=1.5 \
+    PX4_PARAM_MPC_POS_MODE=4 \
+    PX4_PARAM_MPC_XY_CRUISE=5.0 \
+    PX4_PARAM_MNT_MODE_OUT=1 \
     make px4_sitl gz_x500_gimbal
 ) &
 PIDS+=($!)
