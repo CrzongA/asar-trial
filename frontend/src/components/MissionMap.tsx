@@ -12,13 +12,17 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-const droneIcon = new L.DivIcon({
-  className: 'drone-marker',
-  html:
-    '<div style="width:18px;height:18px;border-radius:50%;background:#06b6d4;box-shadow:0 0 0 4px rgba(6,182,212,0.3);border:2px solid white"></div>',
-  iconSize: [18, 18],
-  iconAnchor: [9, 9],
-});
+const droneIcon = (heading: number) =>
+  new L.DivIcon({
+    className: 'drone-marker',
+    html: `<div style="transform: rotate(${heading}deg); transition: transform 0.1s linear; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 3L4 19L12 15L20 19L12 3Z" fill="#06b6d4" stroke="white" stroke-width="2" stroke-linejoin="round"/>
+      </svg>
+    </div>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+  });
 
 const waypointIcon = (idx: number, active: boolean) =>
   new L.DivIcon({
@@ -47,6 +51,7 @@ export default function MissionMap() {
   const { waypoints, activeIndex, executing, add } = useWaypoints();
   const [mounted, setMounted] = useState(false);
   const [dronePosition, setDronePosition] = useState<[number, number]>([47.397742, 8.545594]);
+  const [heading, setHeading] = useState(0);
   const [haveFix, setHaveFix] = useState(false);
   const mapRef = useRef<L.Map | null>(null);
 
@@ -63,6 +68,12 @@ export default function MissionMap() {
       messageType: 'px4_msgs/msg/VehicleGlobalPosition',
     });
 
+    const posSub = new ROSLIB.Topic({
+      ros,
+      name: '/fmu/out/vehicle_local_position_v1',
+      messageType: 'px4_msgs/msg/VehicleLocalPosition',
+    });
+
     gpsSub.subscribe((msg: any) => {
       const lat = msg.lat;
       const lon = msg.lon;
@@ -76,7 +87,17 @@ export default function MissionMap() {
       }
     });
 
-    return () => gpsSub.unsubscribe();
+    posSub.subscribe((msg: any) => {
+      if (Number.isFinite(msg.heading)) {
+        // msg.heading is in radians (NED), convert to degrees
+        setHeading((msg.heading * 180) / Math.PI);
+      }
+    });
+
+    return () => {
+      gpsSub.unsubscribe();
+      posSub.unsubscribe();
+    };
   }, [ros, connected, haveFix]);
 
   if (!mounted) {
@@ -101,7 +122,7 @@ export default function MissionMap() {
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        <Marker position={dronePosition} icon={droneIcon}>
+        <Marker position={dronePosition} icon={droneIcon(heading)}>
           <Popup>Drone</Popup>
         </Marker>
         {waypoints.map((w, i) => (
