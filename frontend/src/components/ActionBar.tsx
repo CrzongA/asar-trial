@@ -9,6 +9,7 @@ const ARMING_STATE_ARMED = 2;
 export default function ActionBar() {
   const { ros, connected } = useRos();
   const [armingState, setArmingState] = useState<number>(0);
+  const [landed, setLanded] = useState(true);
   const [confirmLand, setConfirmLand] = useState(false);
 
   useEffect(() => {
@@ -19,10 +20,22 @@ export default function ActionBar() {
       messageType: 'px4_msgs/msg/VehicleStatus',
     });
     sub.subscribe((msg: any) => setArmingState(msg.arming_state));
-    return () => sub.unsubscribe();
+
+    const landSub = new ROSLIB.Topic({
+      ros,
+      name: '/fmu/out/vehicle_land_detected',
+      messageType: 'px4_msgs/msg/VehicleLandDetected',
+    });
+    landSub.subscribe((msg: any) => setLanded(!!msg.landed));
+
+    return () => {
+      sub.unsubscribe();
+      landSub.unsubscribe();
+    };
   }, [ros, connected]);
 
   const armed = armingState === ARMING_STATE_ARMED;
+  const disarmDisabled = armed && !landed;
 
   const sendArmDisarm = (arm: boolean) => {
     if (!ros) return;
@@ -65,7 +78,7 @@ export default function ActionBar() {
     <div className="flex items-center gap-2">
       <button
         onClick={() => sendArmDisarm(!armed)}
-        disabled={!connected}
+        disabled={!connected || disarmDisabled}
         className={`px-4 py-2 rounded-lg font-mono text-sm font-semibold border transition disabled:opacity-40 disabled:cursor-not-allowed ${
           armed
             ? 'bg-amber-600/20 border-amber-500 text-amber-300 hover:bg-amber-600/30'

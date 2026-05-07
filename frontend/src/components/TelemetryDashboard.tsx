@@ -166,10 +166,10 @@ export default function TelemetryDashboard() {
   const warning = BATTERY_WARNING[t.batteryWarning] ?? BATTERY_WARNING[0];
 
   return (
-    <div className="p-4 flex-1 overflow-y-auto">
-      <h2 className="text-base font-semibold mb-3 text-cyan-400">Flight Telemetry</h2>
+    <div className="p-2 flex-1 overflow-y-auto scrollbar-hide">
+      <h2 className="text-sm font-bold mb-2 text-cyan-400 uppercase tracking-wider">Flight Telemetry</h2>
 
-      <div className="grid grid-cols-2 gap-2 mb-3">
+      <div className="grid grid-cols-2 gap-1.5 mb-2">
         <Tile label="ALTITUDE" value={t.alt.toFixed(1)} unit="m" />
         <Tile label="GROUND SPEED" value={t.speed.toFixed(1)} unit="m/s" />
         <Tile
@@ -177,54 +177,54 @@ export default function TelemetryDashboard() {
           value={t.battery == null ? '—' : t.battery.toFixed(0)}
           unit={t.battery == null ? '' : '%'}
           valueClass={batteryColor}
-          sub={t.voltage != null ? `${t.voltage.toFixed(2)} V · ${warning.label}` : warning.label}
+          sub={t.voltage != null ? `${t.voltage.toFixed(1)}V` : warning.label}
           subClass={warning.color}
         />
-        <Tile label="FLIGHT MODE" value={t.mode} valueClass="text-yellow-400 text-base" />
+        <Tile label="MODE" value={t.mode} valueClass="text-yellow-400 text-sm" />
       </div>
 
-      <div className="grid grid-cols-2 gap-2 mb-3">
+      <div className="grid grid-cols-2 gap-1.5 mb-2">
         <Tile
           label="LATITUDE"
           value={t.lat != null ? t.lat.toFixed(6) : '—'}
-          valueClass="text-sm font-semibold text-cyan-200"
+          valueClass="text-[11px] font-semibold text-cyan-200"
         />
         <Tile
           label="LONGITUDE"
           value={t.lon != null ? t.lon.toFixed(6) : '—'}
-          valueClass="text-sm font-semibold text-cyan-200"
+          valueClass="text-[11px] font-semibold text-cyan-200"
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-2 mb-3">
+      <div className="grid grid-cols-2 gap-1.5 mb-2">
         <div
-          className={`rounded-lg p-2 border text-xs font-mono ${
+          className={`rounded-lg p-1.5 border text-xs font-mono flex flex-col justify-center ${
             t.armed
               ? 'bg-amber-950/30 border-amber-700 text-amber-300'
               : 'bg-neutral-900 border-neutral-800 text-neutral-400'
           }`}
         >
-          <div className="text-[10px] uppercase opacity-75">Arming</div>
-          <div className="text-sm font-semibold">{t.armed ? 'ARMED' : 'DISARMED'}</div>
+          <div className="text-[9px] uppercase opacity-75 leading-none mb-1">Arming</div>
+          <div className="text-xs font-bold leading-none">{t.armed ? 'ARMED' : 'DISARMED'}</div>
         </div>
         <div
-          className={`rounded-lg p-2 border text-xs font-mono ${
+          className={`rounded-lg p-1.5 border text-xs font-mono flex flex-col justify-center ${
             t.preflightOk
               ? 'bg-green-950/30 border-green-800 text-green-300'
               : 'bg-red-950/30 border-red-800 text-red-300'
           }`}
         >
-          <div className="text-[10px] uppercase opacity-75">Preflight</div>
-          <div className="text-sm font-semibold">{t.preflightOk ? 'OK' : 'CHECK'}</div>
+          <div className="text-[9px] uppercase opacity-75 leading-none mb-1">Preflight</div>
+          <div className="text-xs font-bold leading-none">{t.preflightOk ? 'OK' : 'CHECK'}</div>
         </div>
       </div>
 
-      <div className="bg-neutral-900 rounded-lg p-2 border border-neutral-800">
-        <div className="text-[10px] text-neutral-500 mb-1 uppercase">Attitude</div>
-        <div className="grid grid-cols-3 gap-2 text-xs font-mono">
-          <Att label="Roll" value={rad2deg(t.roll)} />
-          <Att label="Pitch" value={rad2deg(t.pitch)} />
-          <Att label="Yaw" value={rad2deg(t.yaw)} />
+      <div className="bg-neutral-900 rounded-lg p-1.5 border border-neutral-800">
+        <div className="text-[9px] text-neutral-500 mb-1 uppercase leading-none">Attitude</div>
+        <div className="grid grid-cols-3 gap-1 text-[11px] font-mono">
+          <Att label="R" value={rad2deg(t.roll)} />
+          <Att label="P" value={rad2deg(t.pitch)} />
+          <Att label="Y" value={rad2deg(t.yaw)} />
         </div>
       </div>
     </div>
@@ -247,22 +247,22 @@ function Tile({
   subClass?: string;
 }) {
   return (
-    <div className="bg-neutral-900 rounded-lg p-2 border border-neutral-800">
-      <div className="text-[10px] text-neutral-500 mb-1 uppercase">{label}</div>
-      <div className={`text-xl font-mono ${valueClass}`}>
+    <div className="bg-neutral-900 rounded-lg p-1.5 border border-neutral-800 flex flex-col justify-center">
+      <div className="text-[9px] text-neutral-500 mb-0.5 uppercase leading-none">{label}</div>
+      <div className={`text-base font-mono leading-tight ${valueClass}`}>
         {value}
-        {unit ? <span className="text-xs text-neutral-400 ml-1">{unit}</span> : null}
+        {unit ? <span className="text-[10px] text-neutral-400 ml-0.5">{unit}</span> : null}
       </div>
-      {sub ? <div className={`text-[10px] font-mono mt-0.5 ${subClass ?? 'text-neutral-500'}`}>{sub}</div> : null}
+      {sub ? <div className={`text-[9px] font-mono leading-none mt-0.5 ${subClass ?? 'text-neutral-500'}`}>{sub}</div> : null}
     </div>
   );
 }
 
 function Att({ label, value }: { label: string; value: number }) {
   return (
-    <div className="text-center">
-      <div className="text-neutral-500 text-[9px] uppercase">{label}</div>
-      <div className="text-cyan-300">{value.toFixed(1)}°</div>
+    <div className="flex items-center gap-1">
+      <span className="text-neutral-500 text-[9px] uppercase">{label}:</span>
+      <span className="text-cyan-300">{value.toFixed(0)}°</span>
     </div>
   );
 }
