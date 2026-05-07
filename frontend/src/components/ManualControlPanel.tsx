@@ -19,8 +19,10 @@ export default function ManualControlPanel() {
 
   const leftRef = useRef<StickValue>({ x: 0, y: 0 });
   const rightRef = useRef<StickValue>({ x: 0, y: 0 });
+  const gimbalRef = useRef<StickValue>({ x: 0, y: 0 });
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const topicRef = useRef<ROSLIB.Topic | null>(null);
+  const gimbalTopicRef = useRef<ROSLIB.Topic | null>(null);
 
   useEffect(() => {
     if (!engaged || !ros || !connected) return;
@@ -29,6 +31,12 @@ export default function ManualControlPanel() {
       ros,
       name: '/teleop/manual_input',
       messageType: 'px4_msgs/msg/ManualControlSetpoint',
+    });
+
+    gimbalTopicRef.current = new ROSLIB.Topic({
+      ros,
+      name: '/teleop/gimbal_input',
+      messageType: 'px4_msgs/msg/GimbalManagerSetManualControl',
     });
 
     intervalRef.current = setInterval(() => {
@@ -57,12 +65,30 @@ export default function ManualControlPanel() {
         sticks_moving: true,
         buttons: 0,
       } as any);
+
+      if (gimbalTopicRef.current) {
+        const gimbal = gimbalRef.current;
+        gimbalTopicRef.current.publish({
+          timestamp: ts,
+          origin_sysid: 1,
+          origin_compid: 1,
+          target_system: 1,
+          target_component: 1,
+          flags: 0,
+          gimbal_device_id: 0,
+          pitch: 0.0,
+          yaw: 0.0,
+          pitch_rate: clamp(gimbal.y),
+          yaw_rate: clamp(gimbal.x),
+        } as any);
+      }
     }, 20);
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
       intervalRef.current = null;
       topicRef.current = null;
+      gimbalTopicRef.current = null;
     };
   }, [engaged, ros, connected]);
 
@@ -83,6 +109,12 @@ export default function ManualControlPanel() {
   };
   const handleRightStop = () => {
     rightRef.current = { x: 0, y: 0 };
+  };
+  const handleGimbal = (e: any) => {
+    gimbalRef.current = { x: e.x ?? 0, y: e.y ?? 0 };
+  };
+  const handleGimbalStop = () => {
+    gimbalRef.current = { x: 0, y: 0 };
   };
 
   return (
@@ -141,6 +173,16 @@ export default function ManualControlPanel() {
               throttle={50}
               move={handleRight}
               stop={handleRightStop}
+            />
+          </StickBox>
+          <StickBox label="Gimbal Pan / Tilt" subLabel="Y: tilt  X: pan">
+            <Joystick
+              size={140}
+              baseColor="#1f2937"
+              stickColor="#f59e0b"
+              throttle={50}
+              move={handleGimbal}
+              stop={handleGimbalStop}
             />
           </StickBox>
         </div>
