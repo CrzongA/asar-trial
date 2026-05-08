@@ -1,0 +1,53 @@
+# Deploy on the MI300X (vlm-host). Both services bind to the host network and
+# rely on the upstream Tailscale ACL to scope them to sim-host.
+#
+#   tailscale up --hostname=vlm-host
+#   docker compose -f perception_server/docker-compose.yml up -d
+#
+# After bring-up:
+#   curl http://vlm-host:8000/v1/models      # vLLM (Qwen3-VL)
+#   curl http://vlm-host:8001/healthz        # GroundingDINO
+
+services:
+  vllm:
+    image: rocm/vllm:latest
+    container_name: asar_vllm
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+    ipc: host
+    shm_size: '32gb'
+    network_mode: host
+    environment:
+      - HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+    command: >
+      python3 -m vllm.entrypoints.openai.api_server
+      --model Qwen/Qwen3-VL-235B-A22B-Instruct-FP8
+      --host 0.0.0.0
+      --port 8000
+      --tensor-parallel-size 8
+      --gpu-memory-utilization 0.92
+      --max-model-len 8192
+      --trust-remote-code
+    restart: unless-stopped
+
+  detector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: asar_detector
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+    ipc: host
+    network_mode: host
+    environment:
+      - DETECTOR_HOST=0.0.0.0
+      - DETECTOR_PORT=8001
+      - DETECTOR_MODEL_ID=IDEA-Research/grounding-dino-tiny
+      - DETECTOR_DEVICE=auto
+    restart: unless-stopped
