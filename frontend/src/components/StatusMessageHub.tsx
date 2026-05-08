@@ -55,10 +55,19 @@ export default function StatusMessageHub() {
 
     setActiveMessages(prev => {
       if (persistent && prev.some(m => m.text === text && m.persistent)) return prev;
+      
+      // Filter out existing waypoint progress messages to avoid clutter
+      if (text.startsWith("Proceeding to Waypoint")) {
+        return [...prev.filter(m => !m.text.startsWith("Proceeding to Waypoint")), newMessage];
+      }
+      
       return [...prev, newMessage];
     });
 
-    setHistory(prev => [newMessage, ...prev].slice(0, 50));
+    setHistory(prev => {
+      if (prev.length > 0 && prev[0].text === text) return prev;
+      return [newMessage, ...prev].slice(0, 50);
+    });
 
     if (!persistent) {
       setTimeout(() => {

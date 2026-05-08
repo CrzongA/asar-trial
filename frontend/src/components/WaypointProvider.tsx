@@ -11,6 +11,9 @@ import {
   DEFAULT_ALT_M,
   latLonToEnu,
   publishGoto,
+  publishWaypointIndex,
+  publishCancel,
+  publishCompleted,
 } from '@/hooks/useWaypoints';
 
 export const WaypointProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -57,6 +60,7 @@ export const WaypointProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           if (next >= queueRef.current.length) {
             targetEnuRef.current = null;
             setExecuting(false);
+            if (ros) publishCompleted(ros);
           } else {
             advancingRef.current = true;
             indexRef.current = next;
@@ -67,6 +71,7 @@ export const WaypointProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               const enu = latLonToEnu(wp.lat, wp.lon, wp.alt, ref);
               targetEnuRef.current = enu;
               publishGoto(ros, enu);
+              publishWaypointIndex(ros, next + 1);
             }
             setTimeout(() => {
               advancingRef.current = false;
@@ -111,6 +116,7 @@ export const WaypointProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const enu = latLonToEnu(wp.lat, wp.lon, wp.alt, ref);
     targetEnuRef.current = enu;
     publishGoto(ros, enu);
+    publishWaypointIndex(ros, 1);
     setExecuting(true);
     setActiveIndex(0);
     return { ok: true };
@@ -129,7 +135,7 @@ export const WaypointProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
     const enu = { east: cur.y, north: cur.x, up: -cur.z };
     targetEnuRef.current = enu;
-    publishGoto(ros, enu);
+    publishCancel(ros);
     return { ok: true };
   }, [ros]);
 

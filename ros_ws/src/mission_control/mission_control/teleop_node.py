@@ -37,7 +37,7 @@ PX4_QOS = QoSProfile(
 )
 
 PUBLISH_HZ = 50.0
-INPUT_TIMEOUT_NS = 500_000_000  # stop republishing after 0.5 s of silence
+INPUT_TIMEOUT_NS = 2_000_000_000  # stop republishing after 2.0 s of silence
 # px4_msgs/ManualControlSetpoint enum: SOURCE_RC=1, SOURCE_MAVLINK_0=2.
 # With COM_RC_IN_MODE=1 (joystick only) PX4 invalidates any setpoint whose
 # data_source==SOURCE_RC, so we must claim MAVLink_0 or PX4 silently drops it.

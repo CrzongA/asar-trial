@@ -80,3 +80,30 @@ export function publishGoto(
     },
   } as any);
 }
+
+export function publishWaypointIndex(ros: ROSLIB.Ros, index: number) {
+  const topic = new ROSLIB.Topic({
+    ros,
+    name: '/mission/current_waypoint',
+    messageType: 'std_msgs/msg/Int32',
+  });
+  topic.publish({ data: index } as any);
+}
+
+export function publishCancel(ros: ROSLIB.Ros) {
+  const topic = new ROSLIB.Topic({
+    ros,
+    name: '/mission/cancel',
+    messageType: 'std_msgs/msg/Empty',
+  });
+  topic.publish({} as any);
+}
+
+export function publishCompleted(ros: ROSLIB.Ros) {
+  const topic = new ROSLIB.Topic({
+    ros,
+    name: '/mission/completed',
+    messageType: 'std_msgs/msg/Empty',
+  });
+  topic.publish({} as any);
+}
