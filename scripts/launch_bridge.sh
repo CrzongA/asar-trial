@@ -8,6 +8,8 @@
 
 set -e
 
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+
 # --- ROS 2 env ----------------------------------------------------
 if [ -f "/opt/ros/jazzy/setup.bash" ]; then
     source /opt/ros/jazzy/setup.bash
@@ -16,12 +18,23 @@ else
     exit 1
 fi
 
-# Source virtual environment and workspace
-if [ -f "$(dirname "$0")/../.venv/bin/activate" ]; then
-    source "$(dirname "$0")/../.venv/bin/activate"
+# Make venv packages available to all child processes. ROS entry-point scripts
+# use #!/usr/bin/python3 (system Python), so we expose the venv's site-packages
+# via PYTHONPATH rather than relying on the activated interpreter.
+if [ -d "$REPO/.venv" ]; then
+    VENV_SITE=$("$REPO/.venv/bin/python3" -c \
+        "import site; print(site.getsitepackages()[0])" 2>/dev/null || true)
+    if [ -n "$VENV_SITE" ]; then
+        export PYTHONPATH="$VENV_SITE:${PYTHONPATH:-}"
+    fi
 fi
-if [ -f "$(dirname "$0")/../ros_ws/install/setup.bash" ]; then
-    source "$(dirname "$0")/../ros_ws/install/setup.bash"
+
+# Source virtual environment and workspace
+if [ -f "$REPO/.venv/bin/activate" ]; then
+    source "$REPO/.venv/bin/activate"
+fi
+if [ -f "$REPO/ros_ws/install/setup.bash" ]; then
+    source "$REPO/ros_ws/install/setup.bash"
 fi
 
 # --- Process management ----------------------------------------------------
