@@ -6,4 +6,3 @@ numpy
 # torch must be installed separately with the right ROCm/CUDA wheel.
 # See README for the specific pip command per backend.
 transformers>=4.40
-vllm>=0.7.0
