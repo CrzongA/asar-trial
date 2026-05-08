@@ -1,7 +1,10 @@
 #!/bin/bash
-# ASAR Bridge Launcher: mission_node + teleop_node + rosbridge_server + webrtc_streamer
+# ASAR Bridge Launcher: mission_node + teleop_node + mission_manager + sar_agent
+#                     + rosbridge_server + webrtc_streamer
 #
-# Starts all ROS 2 flight-control and web-bridge nodes needed for the frontend.
+# Starts all ROS 2 flight-control, autonomy, and web-bridge nodes needed for
+# the frontend. The sar_agent reads VLM_BASE_URL and DETECTOR_URL from the
+# environment (default: http://vlm-host:8000 and :8001 over Tailscale).
 
 set -e
 
@@ -33,7 +36,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # --- 1. mission_node ------------------------------------------------------
-echo "[1/4] Starting mission_node ..."
+echo "[1/6] Starting mission_node ..."
 ros2 run mission_control mission_node &
 PIDS+=($!)
 
@@ -41,18 +44,38 @@ PIDS+=($!)
 # Bridges /teleop/manual_input -> /fmu/in/manual_control_input at 50 Hz.
 # Must be running before any "take control" request so PX4 receives RC input
 # in POSITION mode; without it PX4 fires manual_control_signal_lost failsafe.
-echo "[2/4] Starting teleop_node ..."
+echo "[2/6] Starting teleop_node ..."
 ros2 run mission_control teleop_node &
 PIDS+=($!)
 
-# --- 3. rosbridge_server (WebSocket port 9090) ---------------------------
-echo "[3/4] Starting rosbridge_server on ws://0.0.0.0:9090 ..."
+# --- 3. mission_manager ---------------------------------------------------
+# Provides /mission/record_target_status service and republishes status to
+# /mission/target_status (latched) for the frontend.
+echo "[3/6] Starting mission_manager ..."
+ros2 run mission_manager mission_manager_node &
+PIDS+=($!)
+
+# --- 4. sar_agent ---------------------------------------------------------
+# Autonomous SAR orchestrator. Subscribes to /sar/briefing and runs the
+# Briefing -> Plan -> Recon -> Acquire -> Secure cycle. Calls the perception
+# servers (GroundingDINO + Qwen3-VL via vLLM) on the MI300X over Tailscale.
+echo "[4/6] Starting sar_agent ..."
+: "${VLM_BASE_URL:=http://vlm-host:8000}"
+: "${DETECTOR_URL:=http://vlm-host:8001}"
+export VLM_BASE_URL DETECTOR_URL
+echo "       VLM_BASE_URL=$VLM_BASE_URL"
+echo "       DETECTOR_URL=$DETECTOR_URL"
+ros2 run sar_agent agent_node &
+PIDS+=($!)
+
+# --- 5. rosbridge_server (WebSocket port 9090) ---------------------------
+echo "[5/6] Starting rosbridge_server on ws://0.0.0.0:9090 ..."
 export ROS_DISABLE_LOANED_MESSAGES=1
 ros2 launch rosbridge_server rosbridge_websocket_launch.xml &
 PIDS+=($!)
 
-# --- 4. webrtc_streamer.py (WebRTC port 8080) ----------------------------
-echo "[4/4] Starting video streamer on http://0.0.0.0:8080 ..."
+# --- 6. webrtc_streamer.py (WebRTC port 8080) ----------------------------
+echo "[6/6] Starting video streamer on http://0.0.0.0:8080 ..."
 python3 "$(dirname "$0")/../middleware/webrtc_streamer.py" &
 PIDS+=($!)
 

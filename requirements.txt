@@ -3,6 +3,8 @@ aiortc
 pyyaml
 numpy<2
 opencv-python
+httpx
+tenacity
 
 # PX4 SITL build prerequisites (consumed by `make px4_sitl gz_x500_gimbal`)
 kconfiglib
