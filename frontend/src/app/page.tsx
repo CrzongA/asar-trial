@@ -9,6 +9,7 @@ import { WaypointProvider } from '@/components/WaypointProvider';
 import RightTabs from '@/components/RightTabs';
 import ActionBar from '@/components/ActionBar';
 import ManualControlPanel from '@/components/ManualControlPanel';
+import SARStatusBadge from '@/components/SARStatusBadge';
 import StatusMessageHub from '@/components/StatusMessageHub';
 
 const MissionMap = dynamic(() => import('@/components/MissionMap'), { ssr: false });
@@ -27,6 +28,7 @@ function HomeContent() {
         </div>
         <div className="flex items-center gap-3">
           <ActionBar />
+          <SARStatusBadge />
           <div className="flex items-center gap-2 px-3 py-1.5 bg-neutral-800 rounded-full border border-neutral-700">
             <div className={`w-2.5 h-2.5 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
             <span className="text-xs font-medium text-neutral-300">

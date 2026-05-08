@@ -1,14 +1,30 @@
 'use client';
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import * as ROSLIB from 'roslib';
+import { useRos } from './RosProvider';
 
 type ConnectionStatus = 'idle' | 'fetching-config' | 'connecting' | 'connected' | 'failed' | 'closed';
+
+interface Detection {
+  bbox: [number, number, number, number];
+  imgW: number;
+  imgH: number;
+  label: string;
+  conf: number;
+  ts: number;
+}
+
+const DETECTION_TTL_MS = 1000;
 
 export default function VideoPlayerWebRTC() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const detectionRef = useRef<Detection | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>('idle');
   const [errorMsg, setErrorMsg] = useState<string>('');
+  const { ros, connected: rosConnected } = useRos();
 
   const start = useCallback(async () => {
     // Clean up any previous connection
@@ -127,6 +143,73 @@ export default function VideoPlayerWebRTC() {
     };
   }, [start]);
 
+  // Subscribe to /sar/detection_overlay and stash the latest detection.
+  useEffect(() => {
+    if (!ros || !rosConnected) return;
+    const sub = new ROSLIB.Topic({
+      ros,
+      name: '/sar/detection_overlay',
+      messageType: 'std_msgs/msg/String',
+    });
+    sub.subscribe(raw => {
+      const m = raw as { data: string };
+      try {
+        const p = JSON.parse(m.data);
+        detectionRef.current = {
+          bbox: p.bbox,
+          imgW: p.img_w,
+          imgH: p.img_h,
+          label: p.label,
+          conf: p.conf,
+          ts: p.ts,
+        };
+      } catch {
+        // ignore
+      }
+    });
+    return () => sub.unsubscribe();
+  }, [ros, rosConnected]);
+
+  // Repaint the bbox canvas on each animation frame; drop stale detections.
+  useEffect(() => {
+    let raf = 0;
+    const draw = () => {
+      const canvas = canvasRef.current;
+      const video = videoRef.current;
+      if (canvas && video && video.videoWidth > 0) {
+        if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
+          canvas.width = video.clientWidth;
+          canvas.height = video.clientHeight;
+        }
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          const det = detectionRef.current;
+          const ageMs = det ? Date.now() - det.ts * 1000 : Infinity;
+          if (det && ageMs < DETECTION_TTL_MS && det.imgW > 0 && det.imgH > 0) {
+            const sx = canvas.width / det.imgW;
+            const sy = canvas.height / det.imgH;
+            const [x, y, w, h] = det.bbox;
+            const opacity = Math.max(0, 1 - ageMs / DETECTION_TTL_MS);
+            ctx.strokeStyle = `rgba(239, 68, 68, ${opacity})`;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x * sx, y * sy, w * sx, h * sy);
+            ctx.fillStyle = `rgba(239, 68, 68, ${opacity})`;
+            ctx.font = '12px monospace';
+            const label = `${det.label} ${(det.conf * 100).toFixed(0)}%`;
+            const tw = ctx.measureText(label).width;
+            ctx.fillRect(x * sx, y * sy - 16, tw + 8, 16);
+            ctx.fillStyle = `rgba(255, 255, 255, ${opacity})`;
+            ctx.fillText(label, x * sx + 4, y * sy - 4);
+          }
+        }
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
   const isConnected = status === 'connected';
   const isFailed = status === 'failed' || status === 'closed';
 
@@ -139,6 +222,12 @@ export default function VideoPlayerWebRTC() {
         playsInline
         muted
         className="w-full h-full object-cover"
+      />
+
+      {/* Detection overlay; sized to match the video element. */}
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 w-full h-full pointer-events-none"
       />
 
       {/* Overlay shown while not yet connected */}
