@@ -1,0 +1,12 @@
+bool found
+string health
+string terrain
+float32 distance_to_safety_m
+float64 latitude
+float64 longitude
+float32 altitude_m
+float32 confidence
+string vlm_rationale
+---
+bool accepted
+string mission_id

@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'vlm_agent'
+package_name = 'sar_agent'
 
 setup(
     name=package_name,
@@ -15,12 +15,12 @@ setup(
     zip_safe=True,
     maintainer='user',
     maintainer_email='user@todo.todo',
-    description='VLM Agent package for reasoning over camera frames',
+    description='Autonomous SAR mission orchestrator powered by an open-vocab detector + VLM.',
     license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'agent_node = vlm_agent.agent_node:main'
+            'agent_node = sar_agent.agent_node:main',
         ],
     },
 )
