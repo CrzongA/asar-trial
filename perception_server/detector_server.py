@@ -1,4 +1,4 @@
-"""GroundingDINO detector server (port 8001) with tiling and distractor filtering.
+"""GroundingDINO detector server (port 8001) with tiling and spatial masking.
 
 Exposes a single endpoint matching the contract that
 sar_agent.perception_client.PerceptionClient.detect() expects.
@@ -14,6 +14,7 @@ Environment:
     DETECTOR_TILE_SIZE    default 800
     DETECTOR_TILE_OVERLAP default 200
     DETECTOR_DISTRACTORS  default "drone landing gear . drone frame . propellers"
+    DETECTOR_MASK_REGIONS default "" (format: "y1,x1,y2,x2;y1,x1,y2,x2" in 0-1 range)
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ import numpy as np
 import torch
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from PIL import Image
+from PIL import Image, ImageDraw
 from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
 
 log = logging.getLogger('detector_server')
@@ -54,24 +55,47 @@ class DetectorService:
         self.tile_size = int(os.environ.get('DETECTOR_TILE_SIZE', '800'))
         self.tile_overlap = int(os.environ.get('DETECTOR_TILE_OVERLAP', '200'))
         
-        # Distractors to help GroundingDINO not misclassify landing gear etc.
         self.distractors = os.environ.get(
             'DETECTOR_DISTRACTORS', 
             'drone landing gear . drone frame . propellers'
         ).strip()
+        
+        # Parse mask regions: "y1,x1,y2,x2;..."
+        self.mask_regions = []
+        mask_str = os.environ.get('DETECTOR_MASK_REGIONS', '').strip()
+        if mask_str:
+            try:
+                for region in mask_str.split(';'):
+                    self.mask_regions.append([float(v) for v in region.split(',')])
+                log.info(f'Parsed {len(self.mask_regions)} mask regions.')
+            except Exception as e:
+                log.error(f'Failed to parse DETECTOR_MASK_REGIONS "{mask_str}": {e}')
 
         log.info(f'Loading {self.model_id} on {self.device}...')
         self.processor = AutoProcessor.from_pretrained(self.model_id)
         self.model = AutoModelForZeroShotObjectDetection.from_pretrained(self.model_id).to(self.device)
         self.model.eval()
-        log.info(f'Detector ready (Tiling={self.use_tiling}, Distractors="{self.distractors}").')
+        log.info(f'Detector ready (Tiling={self.use_tiling}, Masks={len(self.mask_regions)}).')
+
+    def _apply_masks(self, image: Image.Image) -> Image.Image:
+        """Draw black rectangles over masked regions to ignore drone parts."""
+        if not self.mask_regions:
+            return image
+            
+        # Work on a copy to avoid side effects
+        draw_img = image.copy()
+        draw = ImageDraw.Draw(draw_img)
+        w, h = image.size
+        
+        for y1, x1, y2, x2 in self.mask_regions:
+            # Convert normalized 0-1 coordinates to pixels
+            shape = [x1 * w, y1 * h, x2 * w, y2 * h]
+            draw.rectangle(shape, fill=(0, 0, 0))
+            
+        return draw_img
 
     def _run_grounding_dino(self, image: Image.Image, prompt: str) -> list[dict]:
-        """Run GroundingDINO with negative prompting (distractors)."""
         clean_prompt = prompt.strip().rstrip('.')
-        
-        # Combine user prompt with distractors.
-        # This forces the model to choose between the target and known noise sources.
         text = f"{clean_prompt} . {self.distractors} ."
             
         inputs = self.processor(images=image, text=text, return_tensors='pt').to(self.device)
@@ -89,17 +113,9 @@ class DetectorService:
         
         out = []
         for box, score, label in zip(results['boxes'], results['scores'], results['labels']):
-            # Filter: only keep detections that match the user's actual prompt tokens.
-            # GroundingDINO labels are the matched substrings.
             label_str = str(label) if label else clean_prompt
-            
-            # If the detected label matches one of our distractors, skip it.
             if any(d.strip() in label_str.lower() for d in self.distractors.split('.')):
                 continue
-            
-            # Also skip if it doesn't contain at least one part of the user's prompt
-            # (To handle cases where GroundingDINO might mis-label but the box is good,
-            # though usually it's the other way around).
             
             x1, y1, x2, y2 = box.tolist()
             out.append({
@@ -110,10 +126,13 @@ class DetectorService:
         return out
 
     def detect(self, image: Image.Image, prompt: str) -> list[dict]:
+        # Apply spatial masking first to ignore landing gear
+        masked_image = self._apply_masks(image)
+        
         if not self.use_tiling:
-            return self._run_grounding_dino(image, prompt)
+            return self._run_grounding_dino(masked_image, prompt)
 
-        w, h = image.size
+        w, h = masked_image.size
         stride = self.tile_size - self.tile_overlap
         
         all_detections = []
@@ -123,7 +142,7 @@ class DetectorService:
                 x1 = min(x0 + self.tile_size, w)
                 y1 = min(y0 + self.tile_size, h)
                 
-                tile = image.crop((x0, y0, x1, y1))
+                tile = masked_image.crop((x0, y0, x1, y1))
                 tile_detections = self._run_grounding_dino(tile, prompt)
                 
                 for d in tile_detections:
@@ -137,16 +156,13 @@ class DetectorService:
                 if x1 == w: break
             if y1 == h: break
             
-        # Basic NMS to merge overlapping boxes from adjacent tiles
         return self._nms(all_detections, iou_threshold=0.5)
 
     def _nms(self, detections: list[dict], iou_threshold: float) -> list[dict]:
         if not detections:
             return []
             
-        # Convert to tensor for faster NMS
         boxes = torch.tensor([d['bbox'] for d in detections])
-        # Convert [x, y, w, h] to [x1, y1, x2, y2]
         boxes[:, 2] += boxes[:, 0]
         boxes[:, 3] += boxes[:, 1]
         
@@ -157,7 +173,6 @@ class DetectorService:
 
     @staticmethod
     def _torch_nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float) -> list[int]:
-        """Simple NMS implementation since we might not have torchvision installed."""
         x1 = boxes[:, 0]
         y1 = boxes[:, 1]
         x2 = boxes[:, 2]
@@ -193,7 +208,7 @@ class DetectorService:
 
 
 service: DetectorService | None = None
-app = FastAPI(title='ASAR Detector (GroundingDINO)', version='0.4.0')
+app = FastAPI(title='ASAR Detector (GroundingDINO)', version='0.5.0')
 
 
 @app.on_event('startup')
@@ -210,7 +225,8 @@ def healthz() -> dict:
         'status': 'ok',
         'model': service.model_id,
         'device': service.device,
-        'distractors': service.distractors
+        'distractors': service.distractors,
+        'masks': len(service.mask_regions)
     }
 
 
