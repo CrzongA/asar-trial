@@ -9,3 +9,4 @@ class AgentState(Enum):
     CONFIRMING = 'CONFIRMING'
     SECURED = 'SECURED'
     ABORTED = 'ABORTED'
+    PAUSED = 'PAUSED'

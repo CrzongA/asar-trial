@@ -64,7 +64,7 @@ class PerceptionClient:
         timeout: float | None = None,
     ) -> None:
         self.vlm_base_url = vlm_base_url or os.environ.get('VLM_BASE_URL', 'http://vlm-host:8000')
-        self.vlm_model = vlm_model or os.environ.get('VLM_MODEL', 'Qwen/Qwen3-VL-235B-A22B-Instruct-FP8')
+        self.vlm_model = vlm_model or os.environ.get('VLM_MODEL', 'Qwen/Qwen2.5-VL-72B-Instruct')
         self.detector_url = detector_url or os.environ.get('DETECTOR_URL', 'http://vlm-host:8001')
         self.timeout = float(timeout if timeout is not None else os.environ.get('PERCEPTION_TIMEOUT', '5.0'))
         self._client = httpx.Client(timeout=self.timeout)

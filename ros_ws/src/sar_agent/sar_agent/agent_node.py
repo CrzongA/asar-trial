@@ -14,6 +14,7 @@ Topics:
   out  /sar/planned_waypoints        (std_msgs/String JSON, latched)
   out  /sar/detection_overlay        (std_msgs/String JSON)
   out  /gimbal/pitch, /gimbal/yaw    (std_msgs/Float64 radians)
+  in   /sar/control                  (std_msgs/String: abort|pause|resume)
   svc  /mission/record_target_status (asar_msgs/srv/RecordTargetStatus, client)
 """
 
@@ -64,7 +65,7 @@ LATCHED_QOS = QoSProfile(
 
 PERCEPTION_HZ = 3.0
 TICK_HZ = 5.0
-DETECTION_CONF_THRESHOLD = 0.4
+DETECTION_CONF_THRESHOLD = 0.55
 DETECTION_STREAK_REQUIRED = 3
 WAYPOINT_REACHED_TOL_M = 3.0
 
@@ -121,6 +122,7 @@ class SarAgentNode(Node):
         self.create_subscription(HomePosition, '/fmu/out/home_position_v1', self._on_home, PX4_QOS)
         self.create_subscription(VehicleLocalPosition, '/fmu/out/vehicle_local_position_v1', self._on_local, PX4_QOS)
         self.create_subscription(TargetStatus, '/mission/target_status', self._on_target_status, LATCHED_QOS)
+        self.create_subscription(String, '/sar/control', self._on_control, 10)
 
         # Pubs
         self.pub_goto = self.create_publisher(PoseStamped, '/mission/goto', 10)
@@ -221,8 +223,22 @@ class SarAgentNode(Node):
         self.local_xy = (msg.x, msg.y, msg.z)
 
     def _on_target_status(self, msg: TargetStatus) -> None:
-        if msg.found and self.state in (AgentState.SEARCHING, AgentState.CONFIRMING):
+        if msg.found and self.state in (AgentState.SEARCHING, AgentState.CONFIRMING, AgentState.PAUSED):
             self._enter(AgentState.SECURED)
+
+    def _on_control(self, msg: String) -> None:
+        cmd = msg.data.lower().strip()
+        if cmd == 'abort':
+            self._enter(AgentState.ABORTED)
+        elif cmd == 'pause':
+            if self.state in (AgentState.SEARCHING, AgentState.CONFIRMING):
+                self._enter(AgentState.PAUSED)
+        elif cmd == 'resume':
+            if self.state == AgentState.PAUSED:
+                # We don't know exactly where we were, but SEARCHING is the
+                # safe fallback that will re-dispatch the current waypoint.
+                self._enter(AgentState.SEARCHING)
+                self._dispatch_waypoint()
 
     # ---- State transitions ------------------------------------------------
     def _enter(self, new_state: AgentState) -> None:
@@ -329,6 +345,9 @@ class SarAgentNode(Node):
 
     # ---- Periodic ticks ---------------------------------------------------
     def _tick(self) -> None:
+        if self.state == AgentState.PAUSED:
+            return
+
         if self.state == AgentState.SEARCHING:
             if self._waypoint_reached():
                 self.active_waypoint_idx += 1
@@ -349,6 +368,9 @@ class SarAgentNode(Node):
     def _perceive(self) -> None:
         if self.state not in (AgentState.SEARCHING, AgentState.CONFIRMING):
             return
+        if self.state == AgentState.PAUSED:
+            return
+
         with self.last_image_lock:
             frame = None if self.last_image is None else self.last_image.copy()
         if frame is None:
@@ -358,7 +380,15 @@ class SarAgentNode(Node):
             try:
                 detections = self.perception.detect(frame, self.target_description)
             except Exception as exc:
-                self._log('error', f'Detector call failed: {exc}')
+                err_msg = str(exc)
+                if hasattr(exc, 'response') and exc.response:
+                    try:
+                        # Try to capture the server-side error body (traceback)
+                        body = exc.response.text
+                        err_msg += f" | Response: {body[:200]}"
+                    except:
+                        pass
+                self._log('error', f'Detector call failed: {err_msg}')
                 return
             best = max(detections, key=lambda d: d.confidence, default=None)
             if best is not None:

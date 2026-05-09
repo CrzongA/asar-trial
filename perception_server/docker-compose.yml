@@ -52,4 +52,5 @@ services:
       - DETECTOR_PORT=8001
       - DETECTOR_MODEL_ID=IDEA-Research/grounding-dino-tiny
       - DETECTOR_DEVICE=auto
+      - DETECTOR_BOX_THRESH=0.55
     restart: unless-stopped

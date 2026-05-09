@@ -37,7 +37,8 @@ PX4_QOS = QoSProfile(
 )
 
 PUBLISH_HZ = 50.0
-INPUT_TIMEOUT_NS = 2_000_000_000  # stop republishing after 2.0 s of silence
+NEUTRAL_TIMEOUT_NS = 100_000_000   # 0.1 s: switch to neutral if no input
+STOP_TIMEOUT_NS = 5_000_000_000    # 5.0 s: stop heartbeat entirely
 # px4_msgs/ManualControlSetpoint enum: SOURCE_RC=1, SOURCE_MAVLINK_0=2.
 # With COM_RC_IN_MODE=1 (joystick only) PX4 invalidates any setpoint whose
 # data_source==SOURCE_RC, so we must claim MAVLink_0 or PX4 silently drops it.
@@ -115,43 +116,57 @@ class TeleopBridge(Node):
         dt = 1.0 / PUBLISH_HZ
 
         # 1. Handle flight controls
-        if self.last_msg is not None and (now_ns - self.last_msg_ns < INPUT_TIMEOUT_NS):
-            out = self.last_msg
-            out.timestamp = now_ns // 1000
-            out.timestamp_sample = out.timestamp
-            self.pub.publish(out)
+        if self.last_msg is not None:
+            age_ns = now_ns - self.last_msg_ns
+            if age_ns < STOP_TIMEOUT_NS:
+                out = deepcopy(self.last_msg)
+                
+                # If teleop source is silent, fallback to neutral values to prevent drift
+                # and allow mission_node to take over without stick-override contention.
+                if age_ns > NEUTRAL_TIMEOUT_NS:
+                    out.roll = 0.0
+                    out.pitch = 0.0
+                    out.yaw = 0.0
+                    out.throttle = 0.0
+                
+                out.timestamp = now_ns // 1000
+                out.timestamp_sample = out.timestamp
+                self.pub.publish(out)
 
         # 2. Handle gimbal
-        if self.last_gimbal_msg is not None and (now_ns - self.last_gimbal_ns < INPUT_TIMEOUT_NS):
-            # 2a. Send to PX4 Gimbal Manager.
-            # This allows PX4 to track gimbal state and potentially manage
-            # multi-client contention or state-based overrides.
-            px4_gimbal = deepcopy(self.last_gimbal_msg)
-            px4_gimbal.timestamp = now_ns // 1000
-            self.gimbal_pub.publish(px4_gimbal)
+        if self.last_gimbal_msg is not None:
+            age_ns = now_ns - self.last_gimbal_ns
+            if age_ns < STOP_TIMEOUT_NS:
+                # 2a. Send to PX4 Gimbal Manager.
+                px4_gimbal = deepcopy(self.last_gimbal_msg)
+                
+                if age_ns > NEUTRAL_TIMEOUT_NS:
+                    px4_gimbal.pitch_rate = 0.0
+                    px4_gimbal.yaw_rate = 0.0
+                
+                px4_gimbal.timestamp = now_ns // 1000
+                self.gimbal_pub.publish(px4_gimbal)
 
-            # 2b. Integrate joystick rates → absolute angles → publish
-            # directly to Gazebo joint command topics via the ros_gz_bridge in launch_sim.sh.
-            # NOTE: We maintain this direct path because the simulated gimbal 
-            # often lacks the necessary internal PX4-to-Gazebo bridge for manager-driven control.
-            pitch_rate = _clamp_unit(self.last_gimbal_msg.pitch_rate)
-            yaw_rate = _clamp_unit(self.last_gimbal_msg.yaw_rate)
+                # 2b. Integrate joystick rates → absolute angles → publish
+                # directly to Gazebo joint command topics via the ros_gz_bridge in launch_sim.sh.
+                pitch_rate = _clamp_unit(px4_gimbal.pitch_rate)
+                yaw_rate = _clamp_unit(px4_gimbal.yaw_rate)
 
-            self._gimbal_pitch_deg += pitch_rate * GIMBAL_RATE_DEG_S * dt
-            self._gimbal_yaw_deg += yaw_rate * GIMBAL_RATE_DEG_S * dt
+                self._gimbal_pitch_deg += pitch_rate * GIMBAL_RATE_DEG_S * dt
+                self._gimbal_yaw_deg += yaw_rate * GIMBAL_RATE_DEG_S * dt
 
-            self._gimbal_pitch_deg = max(GIMBAL_PITCH_MIN_DEG,
-                                         min(GIMBAL_PITCH_MAX_DEG, self._gimbal_pitch_deg))
-            self._gimbal_yaw_deg = max(-GIMBAL_YAW_RANGE_DEG / 2,
-                                       min(GIMBAL_YAW_RANGE_DEG / 2, self._gimbal_yaw_deg))
+                self._gimbal_pitch_deg = max(GIMBAL_PITCH_MIN_DEG,
+                                             min(GIMBAL_PITCH_MAX_DEG, self._gimbal_pitch_deg))
+                self._gimbal_yaw_deg = max(-GIMBAL_YAW_RANGE_DEG / 2,
+                                           min(GIMBAL_YAW_RANGE_DEG / 2, self._gimbal_yaw_deg))
 
-            pitch_msg = Float64()
-            pitch_msg.data = math.radians(self._gimbal_pitch_deg)
-            self.gz_pitch_pub.publish(pitch_msg)
+                pitch_msg = Float64()
+                pitch_msg.data = math.radians(self._gimbal_pitch_deg)
+                self.gz_pitch_pub.publish(pitch_msg)
 
-            yaw_msg = Float64()
-            yaw_msg.data = math.radians(self._gimbal_yaw_deg)
-            self.gz_yaw_pub.publish(yaw_msg)
+                yaw_msg = Float64()
+                yaw_msg.data = math.radians(self._gimbal_yaw_deg)
+                self.gz_yaw_pub.publish(yaw_msg)
 
 
 def main(args=None):
