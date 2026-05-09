@@ -86,8 +86,7 @@ class DetectorService:
         results = self.processor.post_process_grounded_object_detection(
             outputs,
             inputs.input_ids,
-            box_threshold=self.box_threshold,
-            text_threshold=self.text_threshold,
+            threshold=self.box_threshold,
             target_sizes=target_sizes,
         )[0]
         out: list[dict] = []
