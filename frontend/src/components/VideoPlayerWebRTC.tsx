@@ -17,14 +17,27 @@ interface Detection {
 
 const DETECTION_TTL_MS = 1000;
 
-export default function VideoPlayerWebRTC() {
+export default function VideoPlayerWebRTC({
+  onToggleTheater,
+  isTheater = false,
+}: {
+  onToggleTheater: () => void;
+  isTheater?: boolean;
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const detectionRef = useRef<Detection | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>('idle');
+  const [resolution, setResolution] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
   const { ros, connected: rosConnected } = useRos();
+
+  const handleVideoMetadata = () => {
+    if (videoRef.current) {
+      setResolution(`${videoRef.current.videoHeight}p`);
+    }
+  };
 
   const start = useCallback(async () => {
     // Clean up any previous connection
@@ -221,8 +234,14 @@ export default function VideoPlayerWebRTC() {
         autoPlay
         playsInline
         muted
+        onLoadedMetadata={handleVideoMetadata}
         className="w-full h-full object-cover"
       />
+
+      {/* LIVE label */}
+      <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded text-xs text-green-400 font-mono border border-green-500/30 z-10">
+        LIVE | {resolution || 'WebRTC'}
+      </div>
 
       {/* Detection overlay; sized to match the video element. */}
       <canvas
@@ -271,6 +290,24 @@ export default function VideoPlayerWebRTC() {
           )}
         </div>
       )}
+
+      {/* Theater Mode Toggle Button */}
+      <button
+        onClick={onToggleTheater}
+        className="absolute bottom-3 right-3 p-2 bg-black/60 backdrop-blur-md rounded-lg border border-neutral-700 text-neutral-400 hover:text-white transition-all z-30"
+        title={isTheater ? "Normal View" : "Enlarge Video"}
+      >
+        {isTheater ? (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7" />
+          </svg>
+        ) : (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+          </svg>
+        )}
+      </button>
     </div>
   );
 }
+

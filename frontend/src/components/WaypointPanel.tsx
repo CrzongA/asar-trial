@@ -7,6 +7,7 @@ export default function WaypointPanel() {
   const { waypoints, executing, activeIndex, remove, setAltitude, accept, cancel, clear } =
     useWaypoints();
   const [error, setError] = useState<string | null>(null);
+  const [isCollapsed, setIsCollapsed] = useState(false);
 
   const handleAccept = () => {
     const r = accept();
@@ -20,19 +21,68 @@ export default function WaypointPanel() {
     else setError(null);
   };
 
+  if (isCollapsed) {
+    return (
+      <div className="absolute top-2 right-2 z-[400] bg-black/85 backdrop-blur-md rounded-lg border border-neutral-700 shadow-2xl overflow-hidden transition-all duration-300">
+        <button 
+          onClick={() => setIsCollapsed(false)}
+          className="px-3 py-2 flex items-center gap-3 hover:bg-neutral-800/50 transition-colors"
+          title="Expand Waypoints"
+        >
+          {waypoints.length === 0 ? (
+            <>
+              <span className="text-[10px] font-bold text-neutral-300 uppercase tracking-wider">Waypoints</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-500">
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </>
+          ) : (
+            <div className="flex gap-1.5 overflow-x-auto max-w-[200px] no-scrollbar">
+              {waypoints.map((w, i) => (
+                <div
+                  key={w.id}
+                  className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold border transition-colors ${
+                    executing && i === activeIndex
+                      ? 'bg-emerald-600/40 text-emerald-300 border-emerald-500/50 animate-pulse'
+                      : executing && i < activeIndex
+                      ? 'bg-neutral-700/50 text-neutral-500 border-neutral-600/50'
+                      : 'bg-cyan-600/20 text-cyan-400 border-cyan-500/30'
+                  }`}
+                >
+                  {i + 1}
+                </div>
+              ))}
+            </div>
+          )}
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="absolute top-2 right-2 z-[400] w-72 bg-black/85 backdrop-blur-md rounded-lg border border-neutral-700 shadow-2xl flex flex-col max-h-[calc(100%-1rem)]">
+    <div className="absolute top-2 right-2 z-[400] w-72 bg-black/85 backdrop-blur-md rounded-lg border border-neutral-700 shadow-2xl flex flex-col max-h-[calc(100%-1rem)] transition-all duration-300">
       <div className="px-3 py-2 border-b border-neutral-800 flex justify-between items-center shrink-0">
         <h3 className="text-xs font-bold text-neutral-200 uppercase">Waypoints</h3>
-        <span
-          className={`text-[10px] font-mono px-2 py-0.5 rounded ${
-            executing
-              ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
-              : 'bg-neutral-800 text-neutral-400 border border-neutral-700'
-          }`}
-        >
-          {executing ? `EXEC ${activeIndex + 1}/${waypoints.length}` : 'DRAFT'}
-        </span>
+        <div className="flex items-center gap-2">
+          <span
+            className={`text-[10px] font-mono px-2 py-0.5 rounded ${
+              executing
+                ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
+                : 'bg-neutral-800 text-neutral-400 border border-neutral-700'
+            }`}
+          >
+            {executing ? `EXEC ${activeIndex + 1}/${waypoints.length}` : 'DRAFT'}
+          </span>
+          <button 
+            onClick={() => setIsCollapsed(true)}
+            className="p-1 hover:bg-neutral-800 rounded text-neutral-500 hover:text-neutral-300 transition-colors"
+            title="Collapse"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 15l-6-6-6 6" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1 min-h-0">

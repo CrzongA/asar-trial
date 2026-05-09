@@ -120,7 +120,7 @@ export default function ManualControlPanel() {
   };
 
   return (
-    <div className="pointer-events-none">
+    <div className="pointer-events-none select-none touch-none">
       {/* Side Trigger Button for Gimbal */}
       <button
         onClick={() => setGimbalOpen(!gimbalOpen)}
@@ -240,7 +240,7 @@ function StickBox({
   disabled?: boolean;
 }) {
   return (
-    <div className={`flex flex-col items-center gap-1 transition-opacity duration-200 ${disabled ? 'opacity-40 grayscale-[0.5]' : 'opacity-100'}`}>
+    <div className={`flex flex-col items-center gap-1 transition-opacity duration-200 select-none touch-none ${disabled ? 'opacity-40 grayscale-[0.5]' : 'opacity-100'}`}>
       <div className="text-xs text-neutral-400 font-mono uppercase">{label}</div>
       {children}
       <div className="text-[10px] text-neutral-500 font-mono">{subLabel}</div>

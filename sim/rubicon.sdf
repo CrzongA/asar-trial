@@ -37,6 +37,13 @@
       <pose>0 0 0 0 0 0</pose>
     </include>
 
+    <!-- Include the mock target capsule -->
+    <include>
+      <uri>model://target_capsule</uri>
+      <name>target_capsule</name>
+      <pose>2 2 1 0 0 0</pose>
+    </include>
+
     <!-- Drone is spawned here by PX4 -->
 
   </world>

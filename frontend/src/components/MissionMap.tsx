@@ -75,7 +75,7 @@ function MapClickHandler({ onClick }: { onClick: (lat: number, lon: number) => v
   return null;
 }
 
-export default function MissionMap() {
+export default function MissionMap({ isMini = false }: { isMini?: boolean }) {
   const { ros, connected } = useRos();
   const { waypoints, activeIndex, executing, add } = useWaypoints();
   const [mounted, setMounted] = useState(false);
@@ -199,14 +199,17 @@ export default function MissionMap() {
     <div className="w-full h-full z-0 relative">
       <MapContainer
         center={dronePosition}
-        zoom={18}
+        zoom={isMini ? 16 : 18}
+        zoomControl={!isMini}
+        scrollWheelZoom={!isMini}
+        dragging={!isMini}
         style={{ height: '100%', width: '100%' }}
         ref={(m: L.Map | null) => {
           mapRef.current = m;
         }}
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          attribution={isMini ? '' : '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <Marker position={dronePosition} icon={droneIcon(heading)}>
@@ -268,14 +271,18 @@ export default function MissionMap() {
             </Popup>
           </Marker>
         )}
-        <MapClickHandler onClick={add} />
+        {!isMini && <MapClickHandler onClick={add} />}
       </MapContainer>
 
-      <div className="absolute bottom-2 left-2 z-[400] bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-neutral-700 shadow-xl">
-        <h3 className="text-xs font-bold text-neutral-300">MISSION MAP</h3>
-      </div>
-
-      <WaypointPanel />
+      {!isMini && (
+        <>
+          <div className="absolute bottom-2 left-2 z-[400] bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-neutral-700 shadow-xl">
+            <h3 className="text-xs font-bold text-neutral-300">MISSION MAP</h3>
+          </div>
+          <WaypointPanel />
+        </>
+      )}
     </div>
   );
 }
+

@@ -1,0 +1,29 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <model name="target_capsule">
+    <static>true</static>
+    <link name="link">
+      <visual name="visual">
+        <geometry>
+          <capsule>
+            <radius>0.2</radius>
+            <length>0.6</length>
+          </capsule>
+        </geometry>
+        <material>
+          <ambient>1 0 0 1</ambient>
+          <diffuse>1 0 0 1</diffuse>
+          <specular>0.5 0.5 0.5 1</specular>
+        </material>
+      </visual>
+      <collision name="collision">
+        <geometry>
+          <capsule>
+            <radius>0.2</radius>
+            <length>0.6</length>
+          </capsule>
+        </geometry>
+      </collision>
+    </link>
+  </model>
+</sdf>
