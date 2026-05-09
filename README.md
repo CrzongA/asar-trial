@@ -8,16 +8,17 @@ A simulation framework for autonomous drone-based search and rescue, combining a
 
 ## Architecture
 
-The core design principle is a **Reason-Act-Observe** loop, which reconciles the high latency of VLM inference with the hard real-time requirements of drone flight control. Perception is split into two stages — a fast open-vocabulary detector (GroundingDINO / YOLO-World) for screening and Qwen3-VL for confirmation and target-status reasoning. Both run on a remote MI300X host reached over a Tailscale tailnet.
+The core design principle is a **Reason-Act-Observe** loop, which reconciles the high latency of VLM inference with the hard real-time requirements of drone flight control. Perception is split into two stages — a fast open-vocabulary detector (GroundingDINO / YOLO-World) for screening and Qwen2.5-VL for confirmation and target-status reasoning. Both run on a remote MI300X host reached over a Tailscale tailnet.
 
 ```
 sim-host  (this repo)                              vlm-host  (MI300X)
 ┌──────────────────────────────────────┐           ┌──────────────────────────────┐
 │            Next.js Dashboard         │           │  GroundingDINO / YOLO-World  │
 │  Video │ Map │ Tel │ Agent Log │ SAR │           │       (port 8001)            │
-└──────────────────────┬───────────────┘           │                              │
-        roslib (WS)    │   WebRTC                  │  vLLM + Qwen2.5-VL-72B       │
-        ───────────────┤────────────────           │       (port 8000)            │
+│  Reset │ RTL │ Land │ Action Bar     │           │                              │
+└──────────────────────┬───────────────┘           │  vLLM + Qwen2.5-VL-72B       │
+        roslib (WS)    │   WebRTC                  │       (port 8000)            │
+        ───────────────┤────────────────           │                              │
                        │ rosbridge + webrtc        │                              │
                 ROS 2 Jazzy (DDS)                  └──────────────┬───────────────┘
    ┌──────────┬────────┴────────┬─────────────┐                   │
@@ -27,7 +28,7 @@ sar_agent  mission_manager  mission_control  ros_gz_bridge        │ over
  Plan→     status; drives    executor)                            │
  Recon→    Secure-Target           │              │               │
  Acquire→  hover)                  │       Gazebo Harmonic        │
- Secure)        │                  │       asar_world.sdf         │
+ Secure)        │                  │       rubicon.sdf            │
    │     /mission/target_status    │                              │
    │       (latched topic)         │                              │
    └─── HTTPS over Tailscale ──────┴──────────────────────────────┘
@@ -49,7 +50,7 @@ sar_agent  mission_manager  mission_control  ros_gz_bridge        │ over
 | Flight Stack | PX4 SITL + Micro-XRCE-DDS | Realistic flight dynamics |
 | Middleware | ROS 2 Jazzy | LTS; handles all inter-process comms |
 | VLM Inference | Qwen2.5-VL-72B-Instruct via vLLM | ROCm Native; OpenAI-compatible API |
-| Video Stream | aiohttp MJPEG + aiortc WebRTC | Dual-mode; WebRTC preferred |
+| Video Stream | aiortc WebRTC (H.264) | Gather-then-send ICE strategy |
 | Frontend | Next.js 15 / React 19 / Tailwind CSS 4 | TypeScript throughout |
 | Mapping | Leaflet + react-leaflet | GPS track and VLM waypoint markers |
 
@@ -60,12 +61,12 @@ sar_agent  mission_manager  mission_control  ros_gz_bridge        │ over
 ```
 asar-trial/
 ├── sim/
-│   ├── asar_world.sdf          # Gazebo world: ground plane, red-target cylinder
+│   ├── rubicon.sdf             # Default world: desert terrain with obstacles
+│   ├── asar_world.sdf          # Flat world: ground plane, red-target cylinder
 │   └── models/                 # Custom Gazebo models (asar_drone wraps x500_gimbal)
 │
 ├── middleware/
-│   ├── docker-compose.yml      # XRCE-DDS legacy (now native via launch_sim.sh)
-│   ├── webrtc_streamer.py      # MJPEG + WebRTC signaling server (port 8080)
+│   ├── webrtc_streamer.py      # WebRTC signaling server (port 8080)
 │   └── webrtc_streamer_backup.py
 │
 ├── perception_server/          # MI300X-side: vLLM (Qwen2.5-VL) + GroundingDINO
@@ -75,10 +76,11 @@ asar-trial/
 │   └── requirements.txt
 │
 ├── scripts/
-│   ├── launch_sim.sh           # Headless Gazebo + PX4 SITL + ros_gz_bridge
-│   ├── launch_bridge.sh        # rosbridge_server + webrtc_streamer
+│   ├── launch_sim.sh           # Headless Gazebo (EGL) + PX4 SITL + ros_gz_bridge
+│   ├── launch_bridge.sh        # rosbridge_server + webrtc_streamer + ROS nodes
 │   ├── install_xrce_agent.sh   # Builds Micro-XRCE-DDS-Agent v2.4.3 into ros_ws
-│   └── install_rosbridge.sh    # Builds rosbridge into ros_ws
+│   ├── install_rosbridge.sh    # Builds rosbridge into ros_ws
+│   └── set_target.py           # Dynamically moves the red capsule target (snaps to ground)
 │
 ├── ros_ws/
 │   └── src/
@@ -91,12 +93,13 @@ asar-trial/
 │   └── src/
 │       ├── app/page.tsx        # Main dashboard layout
 │       └── components/
-│           ├── VideoPlayer.tsx         # Snapshot-polling fallback
+│           ├── ActionBar.tsx           # Arm/Disarm, Land, RTL, and Reset controls
+│           ├── StatusMessageHub.tsx    # Centralized aircraft status notifications
 │           ├── VideoPlayerWebRTC.tsx   # WebRTC peer stream + bbox overlay
 │           ├── MissionMap.tsx          # Leaflet map: GPS + waypoints + search disk + target
-│           ├── TelemetryDashboard.tsx  # Altitude, speed, battery
+│           ├── TelemetryDashboard.tsx  # Altitude, speed, battery, and PX4 flags
 │           ├── VLMConsole.tsx          # /sar/agent_log reason/act feed
-│           ├── BriefingPanel.tsx       # Publishes /sar/briefing (target, area, optional clue image)
+│           ├── BriefingPanel.tsx       # Publishes /sar/briefing (target, area, clue image)
 │           ├── SARStatusBadge.tsx      # Header pill, subscribes /sar/state
 │           └── TargetStatusCard.tsx    # Renders /mission/target_status
 │
@@ -110,16 +113,16 @@ asar-trial/
 
 | Component | Status |
 |---|---|
-| Gazebo world (drone, camera, target) | **Complete** |
-| Headless sim launcher | **Complete** |
-| ros_gz_bridge (Gazebo → ROS image topic) | **Complete** |
-| MJPEG / WebRTC streamer | **Complete** |
-| `mission_control` (mission_node + teleop_node) | **Complete** — AUTO_LOITER + REPOSITION |
-| `sar_agent` autonomous orchestrator | **Implemented** — needs live perception backend |
-| `mission_manager` target-status service | **Implemented** — drives Secure-Target hover |
-| Two-stage perception backend (detector + VLM) on MI300X | **Implemented** — vLLM native + GroundingDINO server in [perception_server/](perception_server/) |
-| PX4 SITL integration | **Complete** |
-| Frontend dashboard | **Complete** — Briefing panel, search-disk overlay, agent-log feed, bbox video overlay, target-status card |
+| Gazebo world (multiple worlds, gimbal cam) | **Complete** |
+| Headless sim launcher (EGL acceleration) | **Complete** |
+| ros_gz_bridge (Image + Clock + Gimbal) | **Complete** |
+| WebRTC streamer (ICE port ranges) | **Complete** |
+| `mission_control` (AUTO flow + Braking + Reset) | **Complete** |
+| `sar_agent` autonomous orchestrator | **Implemented** |
+| `mission_manager` target-status service | **Implemented** |
+| Two-stage perception backend (MI300X) | **Implemented** |
+| PX4 SITL integration (Standalone mode) | **Complete** |
+| Frontend dashboard (Status Hub + Action Bar) | **Complete** |
 
 ---
 
@@ -128,7 +131,7 @@ asar-trial/
 - ROS 2 Jazzy
 - Gazebo Harmonic (`gz-harmonic`)
 - `ros-jazzy-ros-gz-bridge`
-- Docker + Docker Compose (for DDS agent if not running natively)
+- Docker + Docker Compose (for MI300X backend)
 - ROCm-compatible AMD GPU (MI300X targeted)
 - Node.js ≥ 20 and `npm`
 - Python ≥ 3.10 with `venv`
@@ -154,7 +157,7 @@ Vendor Micro-XRCE-DDS-Agent (eProsima v2.4.3, the version pinned for Jazzy by PX
 source ros_ws/install/setup.bash
 ```
 
-This produces `MicroXRCEAgent` on `PATH`, which `scripts/launch_sim.sh` invokes natively (no Docker needed for the DDS agent).
+This produces `MicroXRCEAgent` on `PATH`, which `scripts/launch_sim.sh` invokes natively.
 
 For the rest of the workspace:
 
@@ -183,35 +186,24 @@ Each component runs in its own terminal. Source the ROS workspace (`source ros_w
 bash scripts/launch_sim.sh
 ```
 
-Starts Gazebo Harmonic headlessly (xvfb-run) and bridges `/camera/image_raw` into ROS 2.
+Starts Gazebo Harmonic headlessly with EGL hardware acceleration and bridges topics into ROS 2. Set `WORLD=asar_world` for the flat testing environment.
 
-### Infrastructure services (vLLM)
+### Infrastructure services (vLLM + Detector)
 
 ```bash
 cd perception_server
-bash launch_vllm.sh
+docker compose up -d
 ```
 
-Starts the Qwen2.5-VL vLLM inference server on **port 8000**. The Micro-XRCE-DDS agent on **port 8888** is launched natively by `scripts/launch_sim.sh`.
+Starts the Qwen2.5-VL vLLM server on **port 8000** and the GroundingDINO detector on **port 8001**.
 
-### Video streamer + rosbridge
+### Video streamer + rosbridge + ROS nodes
 
 ```bash
 bash scripts/launch_bridge.sh
 ```
 
-Serves MJPEG at `http://localhost:8080/video`, single-frame snapshots at `/snapshot`, and WebRTC signaling at `/offer`. Also starts rosbridge_server on WebSocket port 9090.
-
-### ROS nodes
-
-`scripts/launch_bridge.sh` already starts `mission_node`, `teleop_node`, `mission_manager`, and `sar_agent`. To run a single node ad-hoc:
-
-```bash
-ros2 run mission_control mission_node
-ros2 run mission_control teleop_node
-ros2 run mission_manager mission_manager_node
-VLM_BASE_URL=http://vlm-host:8000 DETECTOR_URL=http://vlm-host:8001 ros2 run sar_agent agent_node
-```
+Starts `mission_node`, `teleop_node`, `mission_manager`, `sar_agent`, `rosbridge_server` (port 9090), and the `webrtc_streamer` (port 8080).
 
 ### Kicking off a SAR mission
 
@@ -224,13 +216,13 @@ ros2 topic pub --once /sar/briefing asar_msgs/msg/MissionBriefing \
     search_radius_m: 15.0, search_altitude_m: 8.0}"
 ```
 
-The agent transitions IDLE → BRIEFING → PLANNING → SEARCHING → CONFIRMING → SECURED. Watch progress with `ros2 topic echo /sar/agent_log`, or in the dashboard:
+The agent transitions IDLE → BRIEFING → PLANNING → SEARCHING → CONFIRMING → SECURED. Watch progress in the dashboard:
 
 - **Header badge** shows the live agent state.
-- **Mission Map** draws the search disk + lawn-mower path, then drops a pulsing red marker on target.
+- **Mission Map** draws the search disk + lawn-mower path.
 - **Video** overlays the detector's bbox + label/confidence in real time.
-- **Agent Log tab** prints color-coded state changes, tool calls, detections, and VLM rationales.
-- **SAR tab** holds the briefing form on top and the target-status card below (populated after acquisition).
+- **Status Hub** shows mission progress and failsafe notifications.
+- **Action Bar** provides manual overrides (RTL, Land, Reset).
 
 ### Frontend
 
@@ -241,6 +233,17 @@ npm run dev
 
 Dashboard available at `http://localhost:3000`.
 
+### Controlling the Mock Target
+
+The `rubicon` world includes a mock target (a red capsule). You can dynamically move it while the simulation is running to test the perception and autonomous flight pipelines:
+
+```bash
+# Usage: ./scripts/set_target.py <x> <y> [offset_z]
+./scripts/set_target.py 10.5 -4.2
+```
+
+The script automatically reads the terrain's heightmap and snaps the capsule to the ground at a realistic altitude.
+
 ---
 
 ## Key Network Ports
@@ -249,9 +252,9 @@ Dashboard available at `http://localhost:3000`.
 |---|---|
 | 3000 | Next.js dashboard |
 | 8000 | vLLM REST API (OpenAI-compatible) |
-| 8080 | MJPEG stream / WebRTC signaling |
+| 8080 | WebRTC signaling server |
 | 8888/udp | Micro-XRCE-DDS (PX4 ↔ ROS 2) |
-| 9090 | rosbridge_server (WebSocket, planned) |
+| 9090 | rosbridge_server (WebSocket) |
 
 ---
 
@@ -266,8 +269,14 @@ Dashboard available at `http://localhost:3000`.
 | `/sar/planned_waypoints` (latched) | `std_msgs/String` (JSON) | sar_agent | frontend |
 | `/sar/detection_overlay` | `std_msgs/String` (JSON) | sar_agent | frontend |
 | `/mission/goto` | `geometry_msgs/PoseStamped` (ENU) | sar_agent, mission_manager, frontend | mission_node |
+| `/mission/land` | `std_msgs/Empty` | frontend / ActionBar | mission_node |
+| `/mission/rtl` | `std_msgs/Empty` | frontend / ActionBar | mission_node |
+| `/mission/reset` | `std_msgs/Empty` | frontend / ActionBar | mission_node |
+| `/mission/cancel` | `std_msgs/Empty` | frontend | mission_node |
+| `/mission/status_text` | `std_msgs/String` | mission_node | frontend / StatusHub |
 | `/mission/target_status` (latched) | `asar_msgs/TargetStatus` | mission_manager | frontend |
 | `/mission/record_target_status` | `asar_msgs/srv/RecordTargetStatus` | mission_manager | sar_agent |
+| `/gimbal/pitch`, `/gimbal/yaw` | `std_msgs/Float64` | teleop_node | ros_gz_bridge |
 
 Agent-log entry schema:
 
@@ -280,14 +289,14 @@ Agent-log entry schema:
 
 ## Perception Server (MI300X / Tailscale)
 
-The MI300X-side code lives in [perception_server/](perception_server/) and is deployed with its own docker-compose. It runs two services:
+The MI300X-side code lives in [perception_server/](perception_server/) and runs two services:
 
-| Service | Port | What it is | Custom code? |
-|---|---|---|---|
-| **vLLM (Qwen2.5-VL)** | 8000 | OpenAI-compatible chat completions with vision | No — `vllm serve` is sufficient |
-| **GroundingDINO detector** | 8001 | Open-vocabulary `/detect` endpoint (FastAPI wrapper) | [detector_server.py](perception_server/detector_server.py) |
+| Service | Port | What it is |
+|---|---|---|
+| **vLLM (Qwen2.5-VL)** | 8000 | OpenAI-compatible vision chat completions |
+| **GroundingDINO detector** | 8001 | Open-vocabulary `/detect` endpoint |
 
-`sar_agent` on the sim host reads `VLM_BASE_URL` and `DETECTOR_URL` from the environment. Defaults: `http://vlm-host:8000` and `http://vlm-host:8001`.
+`sar_agent` reads `VLM_BASE_URL` and `DETECTOR_URL` from the environment. Defaults: `http://vlm-host:8000` and `http://vlm-host:8001`.
 
 ### Wire protocol
 
@@ -296,7 +305,9 @@ The MI300X-side code lives in [perception_server/](perception_server/) and is de
   - *Briefing* — derive a target description from a clue image.
   - *Confirmation* — verify the target and emit JSON `{found, health, terrain, distance_to_safety_m, confidence, rationale}`.
 
-### Deploying on the MI300X (Native)
+### Deploying on the MI300X (Docker)
+
+The perception services are containerized for easy deployment on the MI300X host.
 
 ```bash
 # 0. Tailscale on both hosts
@@ -304,30 +315,28 @@ curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up --hostname=vlm-host    # on MI300X
 sudo tailscale up --hostname=sim-host    # on the sim host
 
-# 1. Install dependencies (ROCm 7.0.0 required)
+# 1. Launch services with Docker Compose
 cd perception_server
-chmod +x *.sh
-./install_native.sh
+docker compose up -d
 
-# 2. Launch servers
-# Terminal 1: vLLM
-./launch_vllm.sh
-
-# Terminal 2: Detector
-./launch_detector.sh
-
-# 3. Verify from sim-host
-curl http://vlm-host:8000/v1/models
-curl http://vlm-host:8001/healthz
+# 2. Verify from sim-host
+curl http://vlm-host:8000/v1/models      # vLLM check
+curl http://vlm-host:8001/healthz        # Detector check
 ```
 
-The detector image is built from [perception_server/Dockerfile](perception_server/Dockerfile) on top of the ROCm PyTorch base. To run the detector standalone (no Docker, e.g. on a CPU dev box):
+The `vllm` service pulls the official `rocm/vllm` image, while the `detector` service is built locally from [perception_server/Dockerfile](perception_server/Dockerfile). Both use `--network=host` to bind directly to the Tailscale IP.
+
+#### Native / Developer Fallback
+
+To run the detector standalone (e.g., on a CPU dev box without Docker):
 
 ```bash
 cd perception_server
+python3 -m venv .venv-perception
+source .venv-perception/bin/activate
 pip install -r requirements.txt
-# torch comes from your platform-specific wheel; on CPU:
-pip install torch --index-url https://download.pytorch.org/whl/cpu
+# On CPU, ensure a compatible torch version is installed:
+# pip install torch --index-url https://download.pytorch.org/whl/cpu
 python3 detector_server.py
 ```
 
@@ -335,7 +344,7 @@ python3 detector_server.py
 
 ## Roadmap
 
-- [ ] Camera-intrinsics-aware ground-projection so target lat/lon comes from the bbox center, not the drone position
-- [ ] Tailscale ACL hardening + `tailscale serve` HTTPS termination
-- [ ] Promote sar_agent to a VLM tool-calling driven loop (use TOOL_SCHEMAS in `sar_agent.tools`)
-- [ ] Real-world tuning of GroundingDINO thresholds against drone-altitude footage
+- [ ] Camera-intrinsics-aware ground-projection for target lat/lon
+- [ ] Tailscale ACL hardening + HTTPS termination
+- [ ] Promote `sar_agent` to a VLM tool-calling driven loop
+- [ ] Real-world tuning of GroundingDINO thresholds against drone footage
