@@ -9,6 +9,10 @@ Topics:
   in   /fmu/out/vehicle_local_position_v1 (px4_msgs/VehicleLocalPosition)
   in   /mission/target_status        (asar_msgs/TargetStatus, latched)
   out  /mission/goto                 (geometry_msgs/PoseStamped)
+  out  /mission/land                 (std_msgs/Empty)
+  out  /mission/rtl                  (std_msgs/Empty)
+  out  /fmu/in/vehicle_command       (px4_msgs/VehicleCommand)
+  out  /teleop/manual_input          (px4_msgs/ManualControlSetpoint)
   out  /sar/state                    (std_msgs/String, latched)
   out  /sar/agent_log                (std_msgs/String JSON)
   out  /sar/planned_waypoints        (std_msgs/String JSON, latched)
@@ -32,7 +36,13 @@ import rclpy
 from asar_msgs.msg import MissionBriefing, TargetStatus
 from asar_msgs.srv import RecordTargetStatus
 from geometry_msgs.msg import PoseStamped
-from px4_msgs.msg import HomePosition, VehicleLocalPosition
+from px4_msgs.msg import (
+    HomePosition,
+    ManualControlSetpoint,
+    VehicleCommand,
+    VehicleLocalPosition,
+    VehicleStatus,
+)
 from rclpy.node import Node
 from rclpy.qos import (
     DurabilityPolicy,
@@ -41,7 +51,7 @@ from rclpy.qos import (
     ReliabilityPolicy,
 )
 from sensor_msgs.msg import Image
-from std_msgs.msg import Float64, String
+from std_msgs.msg import Empty, Float64, String
 
 from .perception_client import Detection, PerceptionClient, TargetAssessment
 from .planner import Waypoint, lawn_mower
@@ -111,6 +121,7 @@ class SarAgentNode(Node):
         self.home_alt: Optional[float] = None
         self.local_xy: tuple[float, float, float] | None = None
         self.confirming_started_ns = 0
+        self.is_armed = False
 
         self.perception = PerceptionClient()
         self.tools = ToolRegistry()
@@ -121,11 +132,16 @@ class SarAgentNode(Node):
         self.create_subscription(Image, '/camera/image_raw', self._on_image, 10)
         self.create_subscription(HomePosition, '/fmu/out/home_position_v1', self._on_home, PX4_QOS)
         self.create_subscription(VehicleLocalPosition, '/fmu/out/vehicle_local_position_v1', self._on_local, PX4_QOS)
+        self.create_subscription(VehicleStatus, '/fmu/out/vehicle_status_v4', self._on_status, PX4_QOS)
         self.create_subscription(TargetStatus, '/mission/target_status', self._on_target_status, LATCHED_QOS)
         self.create_subscription(String, '/sar/control', self._on_control, 10)
 
         # Pubs
         self.pub_goto = self.create_publisher(PoseStamped, '/mission/goto', 10)
+        self.pub_land = self.create_publisher(Empty, '/mission/land', 10)
+        self.pub_rtl = self.create_publisher(Empty, '/mission/rtl', 10)
+        self.pub_cmd = self.create_publisher(VehicleCommand, '/fmu/in/vehicle_command', 10)
+        self.pub_manual = self.create_publisher(ManualControlSetpoint, '/teleop/manual_input', 10)
         self.pub_state = self.create_publisher(String, '/sar/state', LATCHED_QOS)
         self.pub_log = self.create_publisher(String, '/sar/agent_log', 10)
         self.pub_plan = self.create_publisher(String, '/sar/planned_waypoints', LATCHED_QOS)
@@ -143,12 +159,18 @@ class SarAgentNode(Node):
 
     # ---- Tool wiring ------------------------------------------------------
     def _wire_tools(self) -> None:
+        self.tools.register('arm_drone', self._tool_arm)
         self.tools.register('goto_waypoint', self._tool_goto)
+        self.tools.register('manual_nudge', self._tool_nudge)
         self.tools.register('set_gimbal', self._tool_gimbal)
         self.tools.register('record_target_status', self._tool_record)
         self.tools.register('cancel_mission', self._tool_cancel)
         self.tools.register('land', self._tool_land)
         self.tools.register('report_progress', self._tool_report)
+
+    def _tool_arm(self, *, arm: bool) -> dict:
+        self._send_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0 if arm else 0.0)
+        return {'ok': True}
 
     def _tool_goto(self, *, lat: float, lon: float, altitude_m: float) -> dict:
         enu = self._global_to_enu(lat, lon, altitude_m)
@@ -164,6 +186,17 @@ class SarAgentNode(Node):
         msg.pose.orientation.w = 1.0
         self.pub_goto.publish(msg)
         return {'ok': True, 'enu': [east, north, up]}
+
+    def _tool_nudge(self, *, pitch: float = 0.0, roll: float = 0.0, yaw: float = 0.0, throttle: float = 0.0) -> dict:
+        msg = ManualControlSetpoint()
+        msg.timestamp = self.get_clock().now().nanoseconds // 1000
+        msg.pitch = float(pitch)
+        msg.roll = float(roll)
+        msg.yaw = float(yaw)
+        msg.throttle = float(throttle)
+        msg.valid = True
+        self.pub_manual.publish(msg)
+        return {'ok': True}
 
     def _tool_gimbal(self, *, pitch_rad: float, yaw_rad: float) -> dict:
         self.pub_gimbal_pitch.publish(Float64(data=float(pitch_rad)))
@@ -187,14 +220,13 @@ class SarAgentNode(Node):
         return {'ok': True, 'future': future}
 
     def _tool_cancel(self) -> dict:
+        self.pub_rtl.publish(Empty())
         self._enter(AgentState.ABORTED)
         return {'ok': True}
 
     def _tool_land(self) -> dict:
-        # mission_node listens on /mission/land (std_msgs/Empty). We avoid an
-        # extra publisher and just emit a goto at current position with z=0.
-        # For now, surface this as a log line for the operator to handle.
-        self._log('action', 'Land requested. Operator must publish /mission/land.')
+        self.pub_land.publish(Empty())
+        self._enter(AgentState.ABORTED)
         return {'ok': True}
 
     def _tool_report(self, *, message: str) -> dict:
@@ -221,6 +253,10 @@ class SarAgentNode(Node):
 
     def _on_local(self, msg: VehicleLocalPosition) -> None:
         self.local_xy = (msg.x, msg.y, msg.z)
+
+    def _on_status(self, msg: VehicleStatus) -> None:
+        # arming_state: 1=disarmed, 2=armed
+        self.is_armed = (msg.arming_state == 2)
 
     def _on_target_status(self, msg: TargetStatus) -> None:
         if msg.found and self.state in (AgentState.SEARCHING, AgentState.CONFIRMING, AgentState.PAUSED):
@@ -251,6 +287,9 @@ class SarAgentNode(Node):
         if new_state == AgentState.BRIEFING:
             self._do_briefing()
         elif new_state == AgentState.PLANNING:
+            if not self.is_armed:
+                self._log('action', 'Auto-arming drone for mission...')
+                self._tool_arm(arm=True)
             self._do_plan()
         elif new_state == AgentState.SEARCHING:
             self.active_waypoint_idx = 0
@@ -466,6 +505,20 @@ class SarAgentNode(Node):
             east_m / (6378137.0 * math.cos(math.radians(self.home_lat)))
         )
         return lat, lon
+
+    # ---- Helpers ---------------------------------------------------------
+    def _send_command(self, command: int, p1: float = 0.0, p2: float = 0.0) -> None:
+        msg = VehicleCommand()
+        msg.timestamp = self.get_clock().now().nanoseconds // 1000
+        msg.command = command
+        msg.param1 = p1
+        msg.param2 = p2
+        msg.target_system = 1
+        msg.target_component = 1
+        msg.source_system = 1
+        msg.source_component = 1
+        msg.from_external = True
+        self.pub_cmd.publish(msg)
 
     # ---- Conversions ------------------------------------------------------
     def _global_to_enu(self, lat: float, lon: float, alt_m: float):
