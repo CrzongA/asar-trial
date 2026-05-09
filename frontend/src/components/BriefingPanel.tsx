@@ -46,7 +46,7 @@ async function fileToImageMsg(file: File) {
   };
 }
 
-export default function BriefingPanel() {
+export default function BriefingPanel({ onMissionLaunched }: { onMissionLaunched?: (mission: any) => void }) {
   const { ros, connected } = useRos();
   const [agentState, setAgentState] = useState('IDLE');
   const [target, setTarget] = useState('red cylinder');
@@ -94,6 +94,15 @@ export default function BriefingPanel() {
         search_altitude_m: parseFloat(altitude),
       });
       setFeedback('Briefing published.');
+      if (onMissionLaunched) {
+        onMissionLaunched({
+          targetDescription: target,
+          centerLat: parseFloat(centerLat),
+          centerLon: parseFloat(centerLon),
+          radius: parseFloat(radius),
+          altitude: parseFloat(altitude),
+        });
+      }
     } catch (err) {
       setFeedback(`Publish failed: ${String(err)}`);
     } finally {
@@ -101,23 +110,8 @@ export default function BriefingPanel() {
     }
   };
 
-  const publishControl = (cmd: string) => {
-    if (!ros || !connected) return;
-    const topic = new ROSLIB.Topic({
-      ros,
-      name: '/sar/control',
-      messageType: 'std_msgs/msg/String',
-    });
-    topic.publish({ data: cmd });
-  };
-
   return (
     <div className="p-4 flex-1 min-h-0 flex flex-col gap-3 overflow-y-auto">
-      <div className="flex justify-between items-center">
-        <h2 className="text-base font-semibold text-cyan-400">Mission Briefing</h2>
-        <span className="text-[10px] uppercase text-neutral-500">/sar/briefing</span>
-      </div>
-
       {!idle && (
         <div className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded p-2">
           Agent is {agentState}. Cancel or wait for SECURED before launching a new briefing.
@@ -127,7 +121,7 @@ export default function BriefingPanel() {
       <label className="block text-xs text-neutral-400">
         Target description
         <input
-          className="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-sm text-white"
+          className="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-sm text-white focus:border-cyan-500 outline-none transition-colors"
           value={target}
           onChange={e => setTarget(e.target.value)}
           placeholder='e.g. "person wearing a red jacket"'
@@ -138,7 +132,7 @@ export default function BriefingPanel() {
         <label className="block text-xs text-neutral-400">
           Center lat
           <input
-            className="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-sm text-white font-mono"
+            className="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-sm text-white font-mono focus:border-cyan-500 outline-none transition-colors"
             value={centerLat}
             onChange={e => setCenterLat(e.target.value)}
           />
@@ -146,7 +140,7 @@ export default function BriefingPanel() {
         <label className="block text-xs text-neutral-400">
           Center lon
           <input
-            className="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-sm text-white font-mono"
+            className="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-sm text-white font-mono focus:border-cyan-500 outline-none transition-colors"
             value={centerLon}
             onChange={e => setCenterLon(e.target.value)}
           />
@@ -158,7 +152,7 @@ export default function BriefingPanel() {
           Radius (m)
           <input
             type="number"
-            className="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-sm text-white font-mono"
+            className="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-sm text-white font-mono focus:border-cyan-500 outline-none transition-colors"
             value={radius}
             onChange={e => setRadius(e.target.value)}
           />
@@ -167,7 +161,7 @@ export default function BriefingPanel() {
           Altitude (m)
           <input
             type="number"
-            className="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-sm text-white font-mono"
+            className="mt-1 w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-sm text-white font-mono focus:border-cyan-500 outline-none transition-colors"
             value={altitude}
             onChange={e => setAltitude(e.target.value)}
           />
@@ -180,41 +174,22 @@ export default function BriefingPanel() {
           type="file"
           accept="image/*"
           onChange={e => setClueFile(e.target.files?.[0] ?? null)}
-          className="mt-1 w-full text-xs text-neutral-300 file:mr-2 file:px-2 file:py-1 file:rounded file:border-0 file:bg-neutral-700 file:text-white"
+          className="mt-1 w-full text-xs text-neutral-300 file:mr-2 file:px-2 file:py-1 file:rounded file:border-0 file:bg-neutral-800 file:text-cyan-400 file:font-semibold hover:file:bg-neutral-700 transition-all cursor-pointer"
         />
       </label>
 
-      {idle ? (
-        <button
-          onClick={submit}
-          disabled={submitting}
-          className="px-3 py-2 rounded bg-cyan-600 hover:bg-cyan-500 disabled:bg-neutral-700 disabled:text-neutral-400 text-white text-sm font-semibold transition"
-        >
-          {submitting ? 'Publishing...' : 'Launch Mission'}
-        </button>
-      ) : (
-        <div className="flex gap-2">
-          <button
-            onClick={() => publishControl(agentState === 'PAUSED' ? 'resume' : 'pause')}
-            className={`flex-1 px-3 py-2 rounded border font-semibold text-sm transition ${agentState === 'PAUSED'
-                ? 'bg-amber-600/20 border-amber-500 text-amber-300 hover:bg-amber-600/30'
-                : 'bg-neutral-800 border-neutral-700 text-neutral-300 hover:bg-neutral-700'
-              }`}
-          >
-            {agentState === 'PAUSED' ? 'Resume' : 'Pause'}
-          </button>
-          <button
-            onClick={() => publishControl('abort')}
-            className="flex-1 px-3 py-2 rounded bg-red-600 hover:bg-red-500 text-white text-sm font-semibold transition"
-          >
-            Abort
-          </button>
-        </div>
-      )}
+      <button
+        onClick={submit}
+        disabled={submitting || !idle}
+        className="mt-2 px-3 py-2.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:bg-neutral-800 disabled:text-neutral-600 text-white text-sm font-bold transition-all shadow-lg shadow-cyan-900/20 active:scale-95"
+      >
+        {submitting ? 'Publishing...' : 'Launch Mission'}
+      </button>
 
       {feedback && (
-        <p className="text-xs text-neutral-400">{feedback}</p>
+        <p className="text-xs text-center text-neutral-500 animate-pulse">{feedback}</p>
       )}
     </div>
   );
 }
+

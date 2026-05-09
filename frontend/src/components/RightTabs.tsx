@@ -1,9 +1,8 @@
 "use client";
 
 import React, { useState } from 'react';
-import BriefingPanel from './BriefingPanel';
+import SARMissionManager from './SARMissionManager';
 import PX4Flags from './PX4Flags';
-import TargetStatusCard from './TargetStatusCard';
 import TelemetryDashboard from './TelemetryDashboard';
 import VLMConsole from './VLMConsole';
 
@@ -14,9 +13,9 @@ export default function RightTabs() {
 
   return (
     <div className="bg-neutral-800/50 rounded-xl border border-neutral-700 shadow-lg flex flex-col h-full overflow-hidden">
-      <div className="flex border-b border-neutral-700 shrink-0">
+      <div className="flex border-b border-neutral-700 shrink-0 overflow-x-auto scrollbar-hide">
         <TabButton active={tab === 'sar'} onClick={() => setTab('sar')}>
-          SAR
+          SAR missions
         </TabButton>
         <TabButton active={tab === 'telemetry'} onClick={() => setTab('telemetry')}>
           Telemetry
@@ -30,10 +29,7 @@ export default function RightTabs() {
       </div>
       <div className="flex-1 min-h-0 flex flex-col">
         <div className={`flex-1 min-h-0 flex flex-col ${tab === 'sar' ? '' : 'hidden'}`}>
-          <BriefingPanel />
-          <div className="px-4 pb-4">
-            <TargetStatusCard />
-          </div>
+          <SARMissionManager />
         </div>
         <div className={`flex-1 min-h-0 flex flex-col ${tab === 'telemetry' ? '' : 'hidden'}`}>
           <TelemetryDashboard />
@@ -48,6 +44,7 @@ export default function RightTabs() {
     </div>
   );
 }
+
 
 function TabButton({
   active,
