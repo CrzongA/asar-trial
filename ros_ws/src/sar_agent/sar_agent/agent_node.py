@@ -39,6 +39,7 @@ from geometry_msgs.msg import PoseStamped
 from px4_msgs.msg import (
     HomePosition,
     ManualControlSetpoint,
+    VehicleAttitude,
     VehicleCommand,
     VehicleLocalPosition,
     VehicleStatus,
@@ -122,6 +123,9 @@ class SarAgentNode(Node):
         self.local_xy: tuple[float, float, float] | None = None
         self.confirming_started_ns = 0
         self.is_armed = False
+        self.current_gimbal_pitch = 0.0
+        self.current_gimbal_yaw = 0.0
+        self.vehicle_q = [1.0, 0.0, 0.0, 0.0]  # w, x, y, z
 
         self.perception = PerceptionClient()
         self.tools = ToolRegistry()
@@ -133,6 +137,7 @@ class SarAgentNode(Node):
         self.create_subscription(HomePosition, '/fmu/out/home_position_v1', self._on_home, PX4_QOS)
         self.create_subscription(VehicleLocalPosition, '/fmu/out/vehicle_local_position_v1', self._on_local, PX4_QOS)
         self.create_subscription(VehicleStatus, '/fmu/out/vehicle_status_v4', self._on_status, PX4_QOS)
+        self.create_subscription(VehicleAttitude, '/fmu/out/vehicle_attitude_v1', self._on_attitude, PX4_QOS)
         self.create_subscription(TargetStatus, '/mission/target_status', self._on_target_status, LATCHED_QOS)
         self.create_subscription(String, '/sar/control', self._on_control, 10)
 
@@ -146,8 +151,8 @@ class SarAgentNode(Node):
         self.pub_log = self.create_publisher(String, '/sar/agent_log', 10)
         self.pub_plan = self.create_publisher(String, '/sar/planned_waypoints', LATCHED_QOS)
         self.pub_overlay = self.create_publisher(String, '/sar/detection_overlay', 10)
-        self.pub_gimbal_pitch = self.create_publisher(Float64, '/gimbal/pitch', 10)
-        self.pub_gimbal_yaw = self.create_publisher(Float64, '/gimbal/yaw', 10)
+        self.pub_gimbal_pitch = self.create_publisher(Float64, '/teleop/gimbal_pitch_setpoint', 10)
+        self.pub_gimbal_yaw = self.create_publisher(Float64, '/teleop/gimbal_yaw_setpoint', 10)
 
         self.cli_record = self.create_client(RecordTargetStatus, '/mission/record_target_status')
 
@@ -199,8 +204,10 @@ class SarAgentNode(Node):
         return {'ok': True}
 
     def _tool_gimbal(self, *, pitch_rad: float, yaw_rad: float) -> dict:
-        self.pub_gimbal_pitch.publish(Float64(data=float(pitch_rad)))
-        self.pub_gimbal_yaw.publish(Float64(data=float(yaw_rad)))
+        self.current_gimbal_pitch = float(pitch_rad)
+        self.current_gimbal_yaw = float(yaw_rad)
+        self.pub_gimbal_pitch.publish(Float64(data=self.current_gimbal_pitch))
+        self.pub_gimbal_yaw.publish(Float64(data=self.current_gimbal_yaw))
         return {'ok': True}
 
     def _tool_record(self, **kwargs) -> dict:
@@ -258,6 +265,9 @@ class SarAgentNode(Node):
         # arming_state: 1=disarmed, 2=armed
         self.is_armed = (msg.arming_state == 2)
 
+    def _on_attitude(self, msg: VehicleAttitude) -> None:
+        self.vehicle_q = [msg.q[0], msg.q[1], msg.q[2], msg.q[3]]  # w, x, y, z
+
     def _on_target_status(self, msg: TargetStatus) -> None:
         if msg.found and self.state in (AgentState.SEARCHING, AgentState.CONFIRMING, AgentState.PAUSED):
             self._enter(AgentState.SECURED)
@@ -292,8 +302,15 @@ class SarAgentNode(Node):
                 self._tool_arm(arm=True)
             self._do_plan()
         elif new_state == AgentState.SEARCHING:
+            self._log('action', 'Pitching gimbal to -60 deg for search...')
+            self._tool_gimbal(pitch_rad=math.radians(-60), yaw_rad=0.0)
             self.active_waypoint_idx = 0
             self._dispatch_waypoint()
+        elif new_state == AgentState.CONFIRMING:
+            self._log('action', 'Braking aircraft for confirmation...')
+            # Actively brake by commanding a goto to the current estimated position
+            lat, lon = self._estimate_target_latlon()
+            self.tools.dispatch('goto_waypoint', lat=lat, lon=lon, altitude_m=self.briefing.search_altitude_m)
         elif new_state == AgentState.ABORTED:
             self._log('action', 'Mission aborted; holding position.')
 
@@ -496,15 +513,80 @@ class SarAgentNode(Node):
         }))
 
     def _estimate_target_latlon(self) -> tuple[float, float]:
+        """Project detection bbox center to ground plane using attitude + gimbal."""
         if self.local_xy is None or self.home_lat is None or self.home_lon is None:
-            assert self.briefing is not None
-            return self.briefing.search_center_lat, self.briefing.search_center_lon
-        north_m, east_m = self.local_xy[0], self.local_xy[1]
-        lat = self.home_lat + math.degrees(north_m / 6378137.0)
+            if self.briefing:
+                return self.briefing.search_center_lat, self.briefing.search_center_lon
+            return 0.0, 0.0
+
+        # 1. Start with drone position in NED
+        north_m, east_m, down_m = self.local_xy[0], self.local_xy[1], self.local_xy[2]
+
+        # 2. Get ray in camera frame (Z-forward, X-right, Y-down)
+        # Default to center of image if no detection
+        img_w, img_h = 1280, 720  # Fallback resolution
+        u, v = img_w / 2, img_h / 2
+        if self.last_detection:
+            bbox = self.last_detection.bbox
+            u = bbox[0] + bbox[2] / 2
+            v = bbox[1] + bbox[3] / 2
+            # Try to get actual resolution from last image
+            with self.last_image_lock:
+                if self.last_image is not None:
+                    img_h, img_w = self.last_image.shape[:2]
+
+        hfov = 1.2  # Approximate for x500_gimbal camera
+        f = (img_w / 2.0) / math.tan(hfov / 2.0)
+        ray_cam = np.array([u - img_w / 2.0, v - img_h / 2.0, f])
+        ray_cam /= np.linalg.norm(ray_cam)
+
+        # 3. Transform Ray: Camera -> Gimbal -> Drone -> World
+        # Camera to Gimbal (Assuming Z-cam is X-gimbal, X-cam is Y-gimbal, Y-cam is Z-gimbal)
+        ray_gimbal = np.array([ray_cam[2], ray_cam[0], ray_cam[1]])
+
+        # Gimbal Rotation (Pitch/Yaw relative to drone)
+        cp, sp = math.cos(self.current_gimbal_pitch), math.sin(self.current_gimbal_pitch)
+        cy, sy = math.cos(self.current_gimbal_yaw), math.sin(self.current_gimbal_yaw)
+        # Pitch (around Y)
+        r_pitch = np.array([
+            [cp, 0, sp],
+            [0, 1, 0],
+            [-sp, 0, cp]
+        ])
+        # Yaw (around Z)
+        r_yaw = np.array([
+            [cy, -sy, 0],
+            [sy, cy, 0],
+            [0, 0, 1]
+        ])
+        ray_drone = r_yaw @ (r_pitch @ ray_gimbal)
+
+        # Drone to World (NED) via attitude quaternion
+        ray_world = self._rotate_vector(self.vehicle_q, ray_drone)
+
+        # 4. Intersect with Ground Plane (z=0 in NED)
+        # P = P0 + d * ray. d = (ground_z - P0.z) / ray.z
+        ground_z = 0.0
+        if ray_world[2] > 0.01:  # Pointing down
+            d = (ground_z - down_m) / ray_world[2]
+            target_north = north_m + d * ray_world[0]
+            target_east = east_m + d * ray_world[1]
+        else:
+            # Ray is looking at horizon or up; fall back to drone position
+            target_north, target_east = north_m, east_m
+
+        # 5. Convert NED to Global
+        lat = self.home_lat + math.degrees(target_north / 6378137.0)
         lon = self.home_lon + math.degrees(
-            east_m / (6378137.0 * math.cos(math.radians(self.home_lat)))
+            target_east / (6378137.0 * math.cos(math.radians(self.home_lat)))
         )
         return lat, lon
+
+    def _rotate_vector(self, q: list[float], v: np.ndarray) -> np.ndarray:
+        """Hamiltonian quaternion rotation (w, x, y, z)."""
+        w, x, y, z = q
+        qv = np.array([x, y, z])
+        return v + 2.0 * np.cross(qv, np.cross(qv, v) + w * v)
 
     # ---- Helpers ---------------------------------------------------------
     def _send_command(self, command: int, p1: float = 0.0, p2: float = 0.0) -> None:

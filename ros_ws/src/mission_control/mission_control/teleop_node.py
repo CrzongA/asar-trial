@@ -80,6 +80,10 @@ class TeleopBridge(Node):
         self.gimbal_pub = self.create_publisher(
             GimbalManagerSetManualControl, '/fmu/in/gimbal_manager_set_manual_control', PX4_QOS)
 
+        # Absolute setpoint subscribers for external nodes (e.g. SAR agent)
+        self.create_subscription(Float64, '/teleop/gimbal_pitch_setpoint', self._on_pitch_setpoint, 10)
+        self.create_subscription(Float64, '/teleop/gimbal_yaw_setpoint', self._on_yaw_setpoint, 10)
+
         self.last_msg: ManualControlSetpoint | None = None
         self.last_msg_ns: int = 0
         self.last_gimbal_msg: GimbalManagerSetManualControl | None = None
@@ -110,6 +114,23 @@ class TeleopBridge(Node):
     def _on_gimbal_input(self, msg: GimbalManagerSetManualControl) -> None:
         self.last_gimbal_msg = msg
         self.last_gimbal_ns = self.get_clock().now().nanoseconds
+
+    def _on_pitch_setpoint(self, msg: Float64) -> None:
+        self._gimbal_pitch_deg = math.degrees(msg.data)
+        self._publish_gz_gimbal()
+
+    def _on_yaw_setpoint(self, msg: Float64) -> None:
+        self._gimbal_yaw_deg = math.degrees(msg.data)
+        self._publish_gz_gimbal()
+
+    def _publish_gz_gimbal(self) -> None:
+        pitch_msg = Float64()
+        pitch_msg.data = math.radians(self._gimbal_pitch_deg)
+        self.gz_pitch_pub.publish(pitch_msg)
+
+        yaw_msg = Float64()
+        yaw_msg.data = math.radians(self._gimbal_yaw_deg)
+        self.gz_yaw_pub.publish(yaw_msg)
 
     def _tick(self) -> None:
         now_ns = self.get_clock().now().nanoseconds
@@ -160,13 +181,7 @@ class TeleopBridge(Node):
                 self._gimbal_yaw_deg = max(-GIMBAL_YAW_RANGE_DEG / 2,
                                            min(GIMBAL_YAW_RANGE_DEG / 2, self._gimbal_yaw_deg))
 
-                pitch_msg = Float64()
-                pitch_msg.data = math.radians(self._gimbal_pitch_deg)
-                self.gz_pitch_pub.publish(pitch_msg)
-
-                yaw_msg = Float64()
-                yaw_msg.data = math.radians(self._gimbal_yaw_deg)
-                self.gz_yaw_pub.publish(yaw_msg)
+                self._publish_gz_gimbal()
 
 
 def main(args=None):
