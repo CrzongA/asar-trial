@@ -43,7 +43,7 @@ export const useWaypoints = (): WaypointStore => {
 };
 
 export const WP_TOL_M = 0.6;
-export const DEFAULT_ALT_M = 5.0;
+export const DEFAULT_ALT_M = 15.0;
 
 export function latLonToEnu(
   lat: number,

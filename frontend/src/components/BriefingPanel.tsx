@@ -53,7 +53,7 @@ export default function BriefingPanel() {
   const [centerLat, setCenterLat] = useState('47.397971');
   const [centerLon, setCenterLon] = useState('8.546164');
   const [radius, setRadius] = useState('15');
-  const [altitude, setAltitude] = useState('8');
+  const [altitude, setAltitude] = useState('15');
   const [clueFile, setClueFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<string>('');
@@ -196,11 +196,10 @@ export default function BriefingPanel() {
         <div className="flex gap-2">
           <button
             onClick={() => publishControl(agentState === 'PAUSED' ? 'resume' : 'pause')}
-            className={`flex-1 px-3 py-2 rounded border font-semibold text-sm transition ${
-              agentState === 'PAUSED'
+            className={`flex-1 px-3 py-2 rounded border font-semibold text-sm transition ${agentState === 'PAUSED'
                 ? 'bg-amber-600/20 border-amber-500 text-amber-300 hover:bg-amber-600/30'
                 : 'bg-neutral-800 border-neutral-700 text-neutral-300 hover:bg-neutral-700'
-            }`}
+              }`}
           >
             {agentState === 'PAUSED' ? 'Resume' : 'Pause'}
           </button>
