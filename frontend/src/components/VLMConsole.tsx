@@ -5,7 +5,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useRos } from './RosProvider';
 import * as ROSLIB from 'roslib';
 
-type LogKind = 'info' | 'state' | 'tool_call' | 'tool_result' | 'vlm_reason' | 'detection' | 'error' | 'action';
+type LogKind = 'info' | 'state' | 'tool_call' | 'tool_result' | 'vlm_reason' | 'detection' | 'error' | 'action' | 'paused';
 
 interface AgentLogEntry {
   ts: number;
@@ -31,6 +31,7 @@ const KIND_COLOR: Record<LogKind, string> = {
   detection: 'text-red-400',
   error: 'text-amber-400',
   action: 'text-green-400',
+  paused: 'text-amber-500',
 };
 
 function formatHeadline(entry: AgentLogEntry): string {
@@ -123,7 +124,7 @@ export default function VLMConsole() {
         </span>
       </div>
 
-      <div className="flex-1 min-h-0 bg-neutral-900 rounded-lg p-3 border border-neutral-800 overflow-y-auto font-mono text-xs">
+      <div className="flex-1 min-h-0 bg-neutral-900 rounded-lg p-3 border border-neutral-800 overflow-y-auto overflow-x-auto font-mono text-xs">
         {logs.map(log => {
           const isOpen = expanded.has(log.id);
           return (
@@ -135,10 +136,10 @@ export default function VLMConsole() {
               <div className="flex gap-2 items-baseline">
                 <span className="text-neutral-500">[{log.timestamp}]</span>
                 <span className="text-neutral-600 uppercase text-[10px]">{log.state}</span>
-                <span className={`uppercase text-[10px] ${KIND_COLOR[log.kind] ?? 'text-neutral-400'}`}>
+                <span className={`uppercase text-[10px] ${KIND_COLOR[log.kind] ?? (log.state === 'PAUSED' ? 'text-amber-500' : 'text-neutral-400')}`}>
                   {log.kind}
                 </span>
-                <span className={`flex-1 truncate ${KIND_COLOR[log.kind] ?? 'text-neutral-300'}`}>
+                <span className={`flex-1 whitespace-pre ${KIND_COLOR[log.kind] ?? 'text-neutral-300'}`}>
                   {formatHeadline({ ts: 0, kind: log.kind, state: log.state, data: log.data })}
                 </span>
               </div>

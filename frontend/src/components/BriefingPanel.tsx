@@ -101,6 +101,16 @@ export default function BriefingPanel() {
     }
   };
 
+  const publishControl = (cmd: string) => {
+    if (!ros || !connected) return;
+    const topic = new ROSLIB.Topic({
+      ros,
+      name: '/sar/control',
+      messageType: 'std_msgs/msg/String',
+    });
+    topic.publish({ data: cmd });
+  };
+
   return (
     <div className="p-4 flex-1 min-h-0 flex flex-col gap-3 overflow-y-auto">
       <div className="flex justify-between items-center">
@@ -174,13 +184,34 @@ export default function BriefingPanel() {
         />
       </label>
 
-      <button
-        onClick={submit}
-        disabled={!idle || submitting}
-        className="px-3 py-2 rounded bg-cyan-600 hover:bg-cyan-500 disabled:bg-neutral-700 disabled:text-neutral-400 text-white text-sm font-semibold transition"
-      >
-        {submitting ? 'Publishing...' : 'Launch Mission'}
-      </button>
+      {idle ? (
+        <button
+          onClick={submit}
+          disabled={submitting}
+          className="px-3 py-2 rounded bg-cyan-600 hover:bg-cyan-500 disabled:bg-neutral-700 disabled:text-neutral-400 text-white text-sm font-semibold transition"
+        >
+          {submitting ? 'Publishing...' : 'Launch Mission'}
+        </button>
+      ) : (
+        <div className="flex gap-2">
+          <button
+            onClick={() => publishControl(agentState === 'PAUSED' ? 'resume' : 'pause')}
+            className={`flex-1 px-3 py-2 rounded border font-semibold text-sm transition ${
+              agentState === 'PAUSED'
+                ? 'bg-amber-600/20 border-amber-500 text-amber-300 hover:bg-amber-600/30'
+                : 'bg-neutral-800 border-neutral-700 text-neutral-300 hover:bg-neutral-700'
+            }`}
+          >
+            {agentState === 'PAUSED' ? 'Resume' : 'Pause'}
+          </button>
+          <button
+            onClick={() => publishControl('abort')}
+            className="flex-1 px-3 py-2 rounded bg-red-600 hover:bg-red-500 text-white text-sm font-semibold transition"
+          >
+            Abort
+          </button>
+        </div>
+      )}
 
       {feedback && (
         <p className="text-xs text-neutral-400">{feedback}</p>
