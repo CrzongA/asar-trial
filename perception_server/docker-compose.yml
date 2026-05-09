@@ -57,4 +57,5 @@ services:
       - DETECTOR_TILING=true
       - DETECTOR_TILE_SIZE=800
       - DETECTOR_TILE_OVERLAP=200
+      - DETECTOR_DISTRACTORS=drone landing gear . drone frame . propellers . trees . rocks
     restart: unless-stopped

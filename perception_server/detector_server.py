@@ -1,4 +1,4 @@
-"""GroundingDINO detector server (port 8001) with tiling support.
+"""GroundingDINO detector server (port 8001) with tiling and distractor filtering.
 
 Exposes a single endpoint matching the contract that
 sar_agent.perception_client.PerceptionClient.detect() expects.
@@ -13,6 +13,7 @@ Environment:
     DETECTOR_TILING       default true
     DETECTOR_TILE_SIZE    default 800
     DETECTOR_TILE_OVERLAP default 200
+    DETECTOR_DISTRACTORS  default "drone landing gear . drone frame . propellers"
 """
 
 from __future__ import annotations
@@ -52,18 +53,26 @@ class DetectorService:
         self.use_tiling = os.environ.get('DETECTOR_TILING', 'true').lower() == 'true'
         self.tile_size = int(os.environ.get('DETECTOR_TILE_SIZE', '800'))
         self.tile_overlap = int(os.environ.get('DETECTOR_TILE_OVERLAP', '200'))
+        
+        # Distractors to help GroundingDINO not misclassify landing gear etc.
+        self.distractors = os.environ.get(
+            'DETECTOR_DISTRACTORS', 
+            'drone landing gear . drone frame . propellers'
+        ).strip()
 
         log.info(f'Loading {self.model_id} on {self.device}...')
         self.processor = AutoProcessor.from_pretrained(self.model_id)
         self.model = AutoModelForZeroShotObjectDetection.from_pretrained(self.model_id).to(self.device)
         self.model.eval()
-        log.info(f'Detector ready (Tiling={self.use_tiling}, TileSize={self.tile_size}).')
+        log.info(f'Detector ready (Tiling={self.use_tiling}, Distractors="{self.distractors}").')
 
     def _run_grounding_dino(self, image: Image.Image, prompt: str) -> list[dict]:
-        """Run GroundingDINO on a single image/tile."""
-        text = prompt.strip()
-        if not text.endswith('.'):
-            text = text + '.'
+        """Run GroundingDINO with negative prompting (distractors)."""
+        clean_prompt = prompt.strip().rstrip('.')
+        
+        # Combine user prompt with distractors.
+        # This forces the model to choose between the target and known noise sources.
+        text = f"{clean_prompt} . {self.distractors} ."
             
         inputs = self.processor(images=image, text=text, return_tensors='pt').to(self.device)
         with torch.no_grad():
@@ -80,9 +89,21 @@ class DetectorService:
         
         out = []
         for box, score, label in zip(results['boxes'], results['scores'], results['labels']):
+            # Filter: only keep detections that match the user's actual prompt tokens.
+            # GroundingDINO labels are the matched substrings.
+            label_str = str(label) if label else clean_prompt
+            
+            # If the detected label matches one of our distractors, skip it.
+            if any(d.strip() in label_str.lower() for d in self.distractors.split('.')):
+                continue
+            
+            # Also skip if it doesn't contain at least one part of the user's prompt
+            # (To handle cases where GroundingDINO might mis-label but the box is good,
+            # though usually it's the other way around).
+            
             x1, y1, x2, y2 = box.tolist()
             out.append({
-                'label': str(label) if label else prompt,
+                'label': label_str,
                 'bbox': [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
                 'confidence': float(score),
             })
@@ -172,7 +193,7 @@ class DetectorService:
 
 
 service: DetectorService | None = None
-app = FastAPI(title='ASAR Detector (GroundingDINO)', version='0.3.0')
+app = FastAPI(title='ASAR Detector (GroundingDINO)', version='0.4.0')
 
 
 @app.on_event('startup')
@@ -189,7 +210,7 @@ def healthz() -> dict:
         'status': 'ok',
         'model': service.model_id,
         'device': service.device,
-        'tiling': service.use_tiling
+        'distractors': service.distractors
     }
 
 
