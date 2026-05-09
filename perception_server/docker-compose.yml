@@ -50,7 +50,11 @@ services:
     environment:
       - DETECTOR_HOST=0.0.0.0
       - DETECTOR_PORT=8001
-      - DETECTOR_MODEL_ID=IDEA-Research/grounding-dino-tiny
+      - DETECTOR_MODEL_ID=IDEA-Research/grounding-dino-base
       - DETECTOR_DEVICE=auto
-      - DETECTOR_BOX_THRESH=0.55
+      - DETECTOR_BOX_THRESH=0.35
+      - DETECTOR_TEXT_THRESH=0.25
+      - DETECTOR_TILING=true
+      - DETECTOR_TILE_SIZE=800
+      - DETECTOR_TILE_OVERLAP=200
     restart: unless-stopped
