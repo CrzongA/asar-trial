@@ -111,7 +111,7 @@ export default function BriefingPanel({ onMissionLaunched }: { onMissionLaunched
   };
 
   return (
-    <div className="p-4 flex-1 min-h-0 flex flex-col gap-3 overflow-y-auto">
+    <div className="p-4 pb-20 flex-1 min-h-0 flex flex-col gap-3 overflow-y-auto">
       {!idle && (
         <div className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded p-2">
           Agent is {agentState}. Cancel or wait for SECURED before launching a new briefing.

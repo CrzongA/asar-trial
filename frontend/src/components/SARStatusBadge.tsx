@@ -33,9 +33,9 @@ export default function SARStatusBadge() {
   const style = STATE_STYLE[state] ?? STATE_STYLE.IDLE;
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 bg-neutral-800 rounded-full border border-neutral-700">
-      <div className={`w-2.5 h-2.5 rounded-full ${style.dot}`} />
-      <span className={`text-xs font-mono uppercase tracking-wider ${style.text}`}>SAR · {state}</span>
+    <div className="w-full flex items-center gap-2 px-3 py-1.5 bg-neutral-800 rounded-full border border-neutral-700 shadow-sm">
+      <div className={`w-2 h-2 rounded-full shrink-0 ${style.dot}`} />
+      <span className={`text-[10px] font-bold uppercase tracking-tight whitespace-nowrap ${style.text}`}>SAR · {state}</span>
     </div>
   );
 }

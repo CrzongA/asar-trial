@@ -48,13 +48,6 @@ function HomeContent() {
         </div>
         <div className="flex items-center gap-3">
           <ActionBar />
-          <SARStatusBadge />
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-neutral-800 rounded-full border border-neutral-700">
-            <div className={`w-2.5 h-2.5 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-            <span className="text-xs font-medium text-neutral-300">
-              {connected ? 'ROS 2 Connected' : 'Connecting...'}
-            </span>
-          </div>
           
           {/* Full Screen Button */}
           <button
@@ -75,7 +68,8 @@ function HomeContent() {
         </div>
       </header>
 
-      <div className="flex-1 min-h-0 flex flex-col gap-3 p-3 relative">
+      <div className="flex-1 min-h-0 flex flex-col p-3 relative overflow-hidden gap-3">
+        {/* Upper Portion: Video & Map (50%) */}
         <div className={`flex-1 min-h-0 grid gap-3 transition-all duration-500 ${theaterMode ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-5'}`}>
           {/* Video Feed Container */}
           <div className={`bg-black rounded-xl overflow-hidden border border-neutral-800 shadow-2xl relative transition-all duration-500 ${theaterMode ? 'col-span-1 h-full' : 'col-span-1 lg:col-span-3'}`}>
@@ -88,16 +82,33 @@ function HomeContent() {
           </div>
 
           {/* Normal Mode Map Container */}
-          <div className={`rounded-xl overflow-hidden border border-neutral-800 shadow-lg relative transition-all duration-500 ${theaterMode ? 'hidden' : 'col-span-1 lg:col-span-2'}`}>
+          <div className={`rounded-xl overflow-hidden border border-neutral-800 shadow-lg relative transition-all duration-500 ${theaterMode ? 'hidden' : 'col-span-1 lg:grid-cols-1 col-span-2'}`}>
             <MissionMap />
           </div>
         </div>
 
-        {/* Bottom Section: Telemetry Tabs */}
-        <div className={`flex-1 min-h-0 flex justify-center transition-all duration-500 ${theaterMode ? 'hidden' : ''}`}>
-          <div className="w-[65vw] max-w-6xl min-w-[500px]">
+        {/* Bottom Section: Telemetry Tabs & Status Badges (50%) */}
+        <div className={`flex-1 min-h-0 flex items-start transition-all duration-500 pb-2 ${theaterMode ? 'hidden' : ''}`}>
+          {/* Left Side: Status Badges (Pushed to the right of this flex-1 area) */}
+          <div className="flex-1 flex justify-end pr-12">
+            <div className="flex flex-col gap-2 w-40 shrink-0">
+              <SARStatusBadge />
+              <div className="w-full flex items-center gap-2 px-3 py-1.5 bg-neutral-800/80 backdrop-blur-sm rounded-full border border-neutral-700 shadow-lg">
+                <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+                <span className="text-[10px] font-bold text-neutral-300 uppercase tracking-tight whitespace-nowrap">
+                  {connected ? 'ROS 2 ONLINE' : 'ROS 2 OFFLINE'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Center: Telemetry Tabs (Fixed width, centered) */}
+          <div className="w-[65vw] max-w-6xl min-w-[500px] h-full shrink-0">
             <RightTabs />
           </div>
+
+          {/* Right Side: Spacer for Symmetry (Ensures Tabs stay centered) */}
+          <div className="flex-1" />
         </div>
 
         {/* Manual Control Overlay (Fixed positioning inside) */}

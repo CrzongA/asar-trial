@@ -127,19 +127,23 @@ export default function VLMConsole() {
       <div className="flex-1 min-h-0 bg-neutral-900 rounded-lg p-3 border border-neutral-800 overflow-y-auto overflow-x-auto font-mono text-xs">
         {logs.map(log => {
           const isOpen = expanded.has(log.id);
+          const isFailure = (log.kind === 'tool_call' || log.kind === 'tool_result') && log.data.ok === false;
+          const kindColor = isFailure ? 'text-red-500 font-bold' : (KIND_COLOR[log.kind] ?? (log.state === 'PAUSED' ? 'text-amber-500' : 'text-neutral-400'));
+          const headlineColor = isFailure ? 'text-red-400' : (KIND_COLOR[log.kind] ?? 'text-neutral-300');
+
           return (
             <div
               key={log.id}
-              className="mb-1.5 border-l-2 border-neutral-700 pl-2 cursor-pointer hover:bg-neutral-800/40 rounded-r"
+              className={`mb-1.5 border-l-2 pl-2 cursor-pointer hover:bg-neutral-800/40 rounded-r transition-colors ${isFailure ? 'border-red-600 bg-red-950/10' : 'border-neutral-700'}`}
               onClick={() => toggle(log.id)}
             >
               <div className="flex gap-2 items-baseline">
                 <span className="text-neutral-500">[{log.timestamp}]</span>
                 <span className="text-neutral-600 uppercase text-[10px]">{log.state}</span>
-                <span className={`uppercase text-[10px] ${KIND_COLOR[log.kind] ?? (log.state === 'PAUSED' ? 'text-amber-500' : 'text-neutral-400')}`}>
-                  {log.kind}
+                <span className={`uppercase text-[10px] ${kindColor}`}>
+                  {log.kind}{isFailure ? ' [FAILED]' : ''}
                 </span>
-                <span className={`flex-1 whitespace-pre ${KIND_COLOR[log.kind] ?? 'text-neutral-300'}`}>
+                <span className={`flex-1 whitespace-pre ${headlineColor}`}>
                   {formatHeadline({ ts: 0, kind: log.kind, state: log.state, data: log.data })}
                 </span>
               </div>

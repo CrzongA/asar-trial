@@ -184,24 +184,29 @@ export default function ManualControlPanel() {
             </StickBox>
           </div>
 
-          {/* Center: Take Control Button */}
-          <div className="pointer-events-auto flex flex-col items-center gap-3">
-            {engaged && (
-              <div className="px-3 py-1 bg-red-500/20 border border-red-500/50 rounded-full text-[10px] font-mono text-red-400 animate-pulse">
-                LIVE TELEOP ACTIVE
+          {/* Center: Take Control Button with Bookmark background */}
+          <div className="pointer-events-auto relative flex flex-col items-center">
+            {/* The "Bookmark" container stemming from the bottom edge */}
+            <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[240px] h-[90px] bg-black/80 backdrop-blur-2xl border-x border-t border-neutral-700/40 rounded-t-[2.5rem] shadow-[0_-10px_30px_-5px_rgba(0,0,0,0.6)] -mb-12 flex flex-col items-center justify-center p-4">
+              <div className="flex flex-col items-center gap-2">
+                {engaged && (
+                  <div className="px-3 py-0.5 bg-red-500/20 border border-red-500/50 rounded-full text-[9px] font-mono text-red-400 animate-pulse">
+                    LIVE TELEOP
+                  </div>
+                )}
+                <button
+                  onClick={() => setEngaged(e => !e)}
+                  disabled={!connected}
+                  className={`px-8 py-2.5 rounded-xl text-[10px] font-bold tracking-[0.2em] border-2 transition-all duration-300 shadow-2xl disabled:opacity-40 hover:scale-105 active:scale-95 ${
+                    engaged
+                      ? 'bg-red-600/10 border-red-500 text-red-300 hover:bg-red-600/20'
+                      : 'bg-emerald-600/10 border-emerald-500 text-emerald-300 hover:bg-emerald-600/20'
+                  }`}
+                >
+                  {engaged ? 'RELEASE' : 'TAKE CONTROL'}
+                </button>
               </div>
-            )}
-            <button
-              onClick={() => setEngaged(e => !e)}
-              disabled={!connected}
-              className={`px-6 py-2.5 rounded-2xl text-xs font-bold tracking-widest border-2 transition-all duration-300 shadow-xl disabled:opacity-40 hover:scale-105 active:scale-95 ${
-                engaged
-                  ? 'bg-red-600/20 border-red-500 text-red-300 hover:bg-red-600/30'
-                  : 'bg-emerald-600/20 border-emerald-500 text-emerald-300 hover:bg-emerald-600/30'
-              }`}
-            >
-              {engaged ? 'RELEASE CONTROL' : 'TAKE CONTROL'}
-            </button>
+            </div>
           </div>
 
           {/* Right Block: Pitch/Roll */}
