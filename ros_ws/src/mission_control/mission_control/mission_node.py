@@ -113,6 +113,7 @@ class MissionNode(Node):
         self.previous_state: State = State.IDLE
         self.current_wp_index: int = -1
         self.mission_target_ned = (0.0, 0.0, -TAKEOFF_ALT_M)
+        self.mission_target_yaw: float = float('nan')
         self.last_published_status: str = ""
         self.last_teleop_ns: int = 0
         
@@ -148,6 +149,9 @@ class MissionNode(Node):
     def _on_goto(self, msg: PoseStamped) -> None:
         target_ned = self._enu_to_ned(msg.pose.position.x, msg.pose.position.y, msg.pose.position.z)
         self.mission_target_ned = target_ned
+        # Extract yaw from quaternion (ENU -> NED handled by atan2 adjustment if needed,
+        # but PoseStamped is usually in ENU. For loiter, we just want the heading.)
+        self.mission_target_yaw = self._quat_to_yaw(msg.pose.orientation)
         self.reposition_sent = False
         
         self.get_logger().info(f'New mission target: {target_ned}')
@@ -315,13 +319,7 @@ class MissionNode(Node):
                     self.command_retry_count += 1
 
         elif self.state == State.MISSION:
-            # 1. Check if reached first to avoid redundant reposition commands
-            if self._reached(self.mission_target_ned):
-                self.get_logger().info('Mission target reached. Returning to IDLE.')
-                self._enter(State.IDLE)
-                return
-
-            # 2. Handle navigation in Auto Loiter
+            # 1. Check navigation in Auto Loiter
             if nav_state != NAV_STATE_AUTO_LOITER:
                 self.mode_settle_count = 0
                 if self.command_retry_count % 10 == 0:
@@ -334,6 +332,12 @@ class MissionNode(Node):
                         self.mode_settle_count += 1
                     else:
                         self._do_reposition()
+                else:
+                    # Only check "reached" AFTER we have successfully sent the reposition command
+                    if self._reached(self.mission_target_ned):
+                        self.get_logger().info('Mission target reached. Returning to IDLE.')
+                        self._enter(State.IDLE)
+                        return
                 self.command_retry_count += 1
 
         elif self.state == State.PAUSED:
@@ -352,9 +356,9 @@ class MissionNode(Node):
     def _do_reposition(self) -> None:
         lat, lon, alt = self._local_to_global(self.mission_target_ned)
         if lat is not None:
-            self.get_logger().info(f'Sending REPOSITION to {lat:.6f}, {lon:.6f}, {alt:.2f}m (settle_count: {self.mode_settle_count})')
+            self.get_logger().info(f'Sending REPOSITION to {lat:.6f}, {lon:.6f}, {alt:.2f}m, yaw={math.degrees(self.mission_target_yaw):.1f}deg')
             self._send_command(VehicleCommand.VEHICLE_CMD_DO_REPOSITION, 
-                             p1=1.0, p2=1.0, p4=float('nan'), 
+                             p1=1.0, p2=1.0, p4=self.mission_target_yaw, 
                              p5=lat, p6=lon, p7=alt)
             self.reposition_sent = True
 
@@ -381,6 +385,23 @@ class MissionNode(Node):
         return (dx*dx + dy*dy + dz*dz)**0.5 < tol
 
     def _enu_to_ned(self, x, y, z): return float(y), float(x), float(-z)
+
+    def _quat_to_yaw(self, q):
+        # Hamiltonian quaternion (w, x, y, z) to Euler Yaw.
+        # Check for all-zeros signal (signals "auto-yaw" from sar_agent)
+        if q.w == 0.0 and q.x == 0.0 and q.y == 0.0 and q.z == 0.0:
+            return float('nan')
+        
+        # Since PoseStamped is ENU, this yaw is relative to East.
+        # PX4 REPOSITION expects NED yaw (relative to North).
+        yaw_enu = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        if math.isnan(yaw_enu): return float('nan')
+        # ENU yaw (East=0, CCW) to NED yaw (North=0, CW)
+        yaw_ned = -yaw_enu + math.pi / 2.0
+        # Normalize to -PI..PI
+        while yaw_ned > math.pi: yaw_ned -= 2.0 * math.pi
+        while yaw_ned < -math.pi: yaw_ned += 2.0 * math.pi
+        return yaw_ned
 
     def _send_command(self, command: int, **kwargs) -> None:
         msg = VehicleCommand()

@@ -177,7 +177,7 @@ class SarAgentNode(Node):
         self._send_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0 if arm else 0.0)
         return {'ok': True}
 
-    def _tool_goto(self, *, lat: float, lon: float, altitude_m: float) -> dict:
+    def _tool_goto(self, *, lat: float, lon: float, altitude_m: float, hold_yaw: bool = False) -> dict:
         enu = self._global_to_enu(lat, lon, altitude_m)
         if enu is None:
             return {'ok': False, 'error': 'no home position'}
@@ -188,7 +188,21 @@ class SarAgentNode(Node):
         msg.pose.position.x = east
         msg.pose.position.y = north
         msg.pose.position.z = up
-        msg.pose.orientation.w = 1.0
+        
+        if hold_yaw:
+            # Pass current orientation to lock yaw
+            w, x, y, z = self.vehicle_q
+            msg.pose.orientation.w = float(w)
+            msg.pose.orientation.x = float(x)
+            msg.pose.orientation.y = float(y)
+            msg.pose.orientation.z = float(z)
+        else:
+            # All zeros signals "don't lock yaw" to mission_node
+            msg.pose.orientation.w = 0.0
+            msg.pose.orientation.x = 0.0
+            msg.pose.orientation.y = 0.0
+            msg.pose.orientation.z = 0.0
+            
         self.pub_goto.publish(msg)
         return {'ok': True, 'enu': [east, north, up]}
 
@@ -308,9 +322,10 @@ class SarAgentNode(Node):
             self._dispatch_waypoint()
         elif new_state == AgentState.CONFIRMING:
             self._log('action', 'Braking aircraft for confirmation...')
-            # Actively brake by commanding a goto to the current estimated position
-            lat, lon = self._estimate_target_latlon()
-            self.tools.dispatch('goto_waypoint', lat=lat, lon=lon, altitude_m=self.briefing.search_altitude_m)
+            # Actively brake by commanding a goto to the current AIRCRAFT position
+            # and HOLDING the current yaw for camera stability.
+            lat, lon = self._get_aircraft_latlon()
+            self.tools.dispatch('goto_waypoint', lat=lat, lon=lon, altitude_m=self.briefing.search_altitude_m, hold_yaw=True)
         elif new_state == AgentState.ABORTED:
             self._log('action', 'Mission aborted; holding position.')
 
@@ -378,6 +393,7 @@ class SarAgentNode(Node):
             lat=wp.lat,
             lon=wp.lon,
             altitude_m=wp.up_m,
+            hold_yaw=False,
         )
         self._log('tool_call', json.dumps({
             'tool': 'goto_waypoint',
@@ -511,6 +527,19 @@ class SarAgentNode(Node):
             'lon': target_lon,
             'ok': result.get('ok', False),
         }))
+
+    def _get_aircraft_latlon(self) -> tuple[float, float]:
+        """Get the drone's current coordinates without ground projection."""
+        if self.local_xy is None or self.home_lat is None or self.home_lon is None:
+            if self.briefing:
+                return self.briefing.search_center_lat, self.briefing.search_center_lon
+            return 0.0, 0.0
+        north_m, east_m = self.local_xy[0], self.local_xy[1]
+        lat = self.home_lat + math.degrees(north_m / 6378137.0)
+        lon = self.home_lon + math.degrees(
+            east_m / (6378137.0 * math.cos(math.radians(self.home_lat)))
+        )
+        return lat, lon
 
     def _estimate_target_latlon(self) -> tuple[float, float]:
         """Project detection bbox center to ground plane using attitude + gimbal."""
